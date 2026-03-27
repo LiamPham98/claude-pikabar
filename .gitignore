@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.claude/tasks/
+.auto-memory/
+/tmp/pikabar-*
+.env
+*.egg-info/
+dist/
+build/
+.venv/
