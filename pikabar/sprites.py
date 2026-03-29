@@ -3,6 +3,16 @@
 Design N final: eyes look RIGHT, tail on LEFT.
 6 rows x 15 cols = 3 terminal lines per pikachu.
 7 rows x 11 cols = 4 terminal lines per pokeball.
+
+Reaction sprites:
+  IDLE_FRAMES   — subtle life cycle (normal + occasional glance)
+  THINKING_SP   — glancing, tail raised, alert
+  STAGING_SP    — same as thinking (alert but softer via decoration)
+  COMMITTED_SP  — winking, tail raised, proud
+  RECOVERED_SP  — normal, relaxed
+  HIT_SP        — eyes closed (pain squint)
+  COMPACTED_SP  — eyes closed (sleeping)
+  BALL_FRAMES   — pokeball wobble (faint/ratelimited)
 """
 
 from .palette import Y, LY, DY, BK, RD, W, PW, PR
@@ -121,52 +131,35 @@ def make_pokeball(tilt=0):
 
 
 # ============================================================
-# Pre-built animation frame sets
+# Reaction sprites
 # ============================================================
 
-# --- Thinking: eyes glance left <-> right ---
-THINK_FRAMES = [
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=0),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=1),
-    make_pika(left_eye=(W, BK), right_eye=(W, BK), tail_variant=0),
-    make_pika(left_eye=(W, BK), right_eye=(W, BK), tail_variant=1),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=0),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=1),
+# --- Idle: subtle life cycle (frame % 3) ---
+IDLE_FRAMES = [
+    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=0, feet_variant=1),  # normal
+    make_pika(left_eye=(W, BK), right_eye=(W, BK), tail_variant=0, feet_variant=1),  # glancing
+    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=1, feet_variant=1),  # tail sway
 ]
 
-# --- Streaming: one eye wink ---
-STREAM_FRAMES = [
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=0),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=1),
-    make_pika(left_eye=(BK, W), right_eye=(Y, DY), tail_variant=0),
-    make_pika(left_eye=(BK, W), right_eye=(Y, DY), tail_variant=1),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=0),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=1),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=0),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=1),
-]
+# --- Thinking: focused, alert ---
+THINKING_SP = make_pika(left_eye=(W, BK), right_eye=(W, BK), tail_variant=1, feet_variant=0)
 
-# --- Tool Use: standard pose, effects via decoration ---
-TOOL_FRAMES = [
-    make_pika(tail_variant=0, feet_variant=0),
-    make_pika(tail_variant=1, feet_variant=1),
-    make_pika(tail_variant=0, feet_variant=0),
-    make_pika(tail_variant=1, feet_variant=1),
-]
+# --- Staging: alert (same sprite as thinking, differentiated by decoration) ---
+STAGING_SP = THINKING_SP
 
-# --- Subagent: standard pose, hearts via decoration ---
-SUBAGENT_FRAMES = [
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=0),
-    make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=1),
-]
+# --- Committed: winking, proud ---
+COMMITTED_SP = make_pika(left_eye=(BK, W), right_eye=(Y, DY), tail_variant=1, feet_variant=0)
 
-# --- Compacting: eyes closed, sleeping ---
-COMPACT_FRAME = make_pika(
-    left_eye=(Y, DY), right_eye=(Y, DY),
-    tail_variant=0, feet_variant=0,
-)
+# --- Recovered: normal, relaxed ---
+RECOVERED_SP = make_pika(left_eye=(BK, W), right_eye=(BK, W), tail_variant=0, feet_variant=1)
 
-# --- Rate Limited: Pokeball wobble (pendulum easing) ---
+# --- Hit: eyes closed (pain) ---
+HIT_SP = make_pika(left_eye=(Y, DY), right_eye=(Y, DY), tail_variant=0, feet_variant=1)
+
+# --- Compacted: eyes closed (sleeping) ---
+COMPACTED_SP = make_pika(left_eye=(Y, DY), right_eye=(Y, DY), tail_variant=0, feet_variant=0)
+
+# --- Faint: Pokeball wobble ---
 _B0 = make_pokeball(tilt=0)
 _BR = make_pokeball(tilt=1)
 _BL = make_pokeball(tilt=-1)
@@ -176,3 +169,11 @@ BALL_FRAMES = [
     _BL, _BL,    # lean left (hold)
     _B0,          # pass through center
 ]
+
+
+# ============================================================
+# Backwards-compat aliases (used by demo.py / animator.py)
+# ============================================================
+
+THINK_FRAMES = IDLE_FRAMES
+COMPACT_FRAME = COMPACTED_SP

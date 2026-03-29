@@ -55,12 +55,17 @@ def UP(n):
     return f"\033[{n}A" if n > 0 else ""
 
 
-def COL(n):
-    """Move cursor to absolute column n."""
-    return f"\033[{n}G"
-
-
 def visible_len(s):
-    """Count visible characters in an ANSI-escaped string."""
+    """Count terminal column width of an ANSI-escaped string.
+
+    Accounts for wide characters (e.g. ⚡ = 2 cols) using
+    Unicode East Asian Width. W/F = 2 cols, everything else = 1.
+    """
     import re
-    return len(re.sub(r'\033\[[^m]*m', '', s))
+    import unicodedata
+    stripped = re.sub(r'\033\[[^m]*m', '', s)
+    width = 0
+    for ch in stripped:
+        eaw = unicodedata.east_asian_width(ch)
+        width += 2 if eaw in ('W', 'F') else 1
+    return width

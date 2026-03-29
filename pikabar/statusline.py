@@ -2,6 +2,7 @@
 """pikabar statusline — Claude Code integration script.
 
 Reads JSON session data from stdin (piped by Claude Code),
+computes deltas from previous call to infer reactions,
 renders Pikachu pixel art + Pokemon-style info panel,
 and prints multi-line output to stdout.
 
@@ -14,7 +15,7 @@ Usage in ~/.claude/settings.json:
 }
 
 Claude Code calls this script on each state update (debounced ~300ms).
-Frame counter persisted in /tmp/pikabar-frame for sprite animation.
+State persisted in /tmp/pikabar-state-{hash} for delta detection.
 Git info cached in /tmp/pikabar-git-cache for performance.
 """
 
@@ -29,16 +30,31 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pikabar.renderer import grid_to_lines
 from pikabar.sprites import (
-    THINK_FRAMES, COMPACT_FRAME, BALL_FRAMES,
+    IDLE_FRAMES, THINKING_SP, STAGING_SP, COMMITTED_SP,
+    RECOVERED_SP, HIT_SP, COMPACTED_SP, BALL_FRAMES,
 )
-from pikabar.info_panel import (
-    decorate_thinking, decorate_compact, decorate_ratelimit,
+from pikabar.info_panel import decorate
+from pikabar.delta import (
+    load_state, save_state, make_snapshot,
+    compute_deltas, infer_events, pick_reaction,
 )
 
 # --- Temp file paths ---
 FRAME_FILE = "/tmp/pikabar-frame"
 GIT_CACHE_FILE = "/tmp/pikabar-git-cache"
 GIT_CACHE_MAX_AGE = 5  # seconds
+
+# --- Reaction → sprite mapping ---
+REACTION_SPRITES = {
+    "idle":      None,  # uses IDLE_FRAMES[frame % N]
+    "thinking":  THINKING_SP,
+    "staging":   STAGING_SP,
+    "committed": COMMITTED_SP,
+    "recovered": RECOVERED_SP,
+    "hit":       HIT_SP,
+    "compacted": COMPACTED_SP,
+    "faint":     None,  # uses BALL_FRAMES[frame % N]
+}
 
 
 def read_frame():
@@ -118,15 +134,13 @@ def compute_hp(data):
         return max(0, int(100 - seven_d)), "7d"
 
 
-def infer_state(data, hp_pct):
-    """Infer Pikachu's emotional state."""
-    if hp_pct is not None and hp_pct <= 0:
-        return "ratelimited"
-    ctx = data.get("context_window", {})
-    used_pct = ctx.get("used_percentage")
-    if used_pct is not None and used_pct > 90:
-        return "compacting"
-    return "active"
+def get_sprite(reaction, frame):
+    """Select the appropriate sprite grid for a reaction."""
+    if reaction == "faint":
+        return BALL_FRAMES[frame % len(BALL_FRAMES)]
+    if reaction == "idle":
+        return IDLE_FRAMES[frame % len(IDLE_FRAMES)]
+    return REACTION_SPRITES.get(reaction, IDLE_FRAMES[0])
 
 
 def render_statusline(data):
@@ -143,43 +157,46 @@ def render_statusline(data):
 
     cost_usd = data.get("cost", {}).get("total_cost_usd", 0) or 0
     duration_ms = data.get("cost", {}).get("total_duration_ms", 0) or 0
-    duration_secs = duration_ms // 1000
 
     hp_pct, hp_window = compute_hp(data)
+    context_pct = data.get("context_window", {}).get("used_percentage")
+
+    # --- Delta detection ---
+    snapshot = make_snapshot(
+        hp_pct, hp_window, context_pct,
+        cost_usd, duration_ms, branch, staged, modified,
+    )
+    prev_state = load_state(cwd)
+    deltas = compute_deltas(prev_state, snapshot)
+    events = infer_events(deltas, snapshot, prev_state)
+    save_state(snapshot, cwd)
+
+    # --- Pick reaction ---
+    reaction = pick_reaction(events, snapshot)
+
+    # --- Build session dict for decorators ---
+    # PP = context remaining (inverted)
+    pp_pct = (100 - context_pct) if context_pct is not None else None
 
     session = {
         "model_id": model_id,
         "model_name": model_name,
         "hp_pct": hp_pct,
         "hp_window": hp_window,
+        "pp_pct": pp_pct,
         "branch": branch,
         "staged": staged,
         "modified": modified,
-        "cost": cost_usd,
-        "duration": duration_secs,
+        "events": events,
+        "deltas": deltas,
+        "reaction": reaction,
+        "_tick": frame,
     }
 
-    # --- Determine state and select sprite ---
-    state = infer_state(data, hp_pct)
-
-    if state == "ratelimited":
-        frames = BALL_FRAMES
-    elif state == "compacting":
-        frames = [COMPACT_FRAME]
-    else:
-        # Default: thinking animation (eyes glancing, tail sway)
-        frames = THINK_FRAMES
-
-    sprite_grid = frames[frame % len(frames)]
+    # --- Select sprite and decorate ---
+    sprite_grid = get_sprite(reaction, frame)
     sprite_lines = grid_to_lines(sprite_grid)
-
-    # --- Delegate to the appropriate decorator ---
-    if state == "ratelimited":
-        output_lines = decorate_ratelimit(sprite_lines, frame, session=session)
-    elif state == "compacting":
-        output_lines = decorate_compact(sprite_lines, frame, session=session)
-    else:
-        output_lines = decorate_thinking(sprite_lines, frame, session=session)
+    output_lines = decorate(reaction, sprite_lines, frame, session=session)
 
     # Prefix each line with \033[0m to prevent Ink.js whitespace trimming
     return "\n".join(f"\033[0m{line}" for line in output_lines)

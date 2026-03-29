@@ -1,30 +1,33 @@
 #!/usr/bin/env python3
-"""pikabar demo — Preview all animation states with Pokemon-style info panel.
+"""pikabar demo — Preview all reaction states with Pokemon-style info panel.
 
 Usage:
     python demo.py [option]
 
 Options:
-    0 = Unified demo (states transition in one view, loops)
-    1 = All states separately
-    2 = Thinking
-    3 = Streaming
-    4 = Tool Use
-    5 = Subagent
-    6 = Compacting
-    7 = Rate Limited
+    0 = Unified demo (reactions transition in one view, loops)
+    1 = All reactions separately
+    2 = Idle
+    3 = Thinking
+    4 = Staging
+    5 = Committed
+    6 = Recovered
+    7 = Compacted
+    8 = Hit
+    9 = Faint
 """
 
 import sys
 
-from pikabar.palette import fg, RST, BOLD, Y, GOLD
+from pikabar.palette import fg, RST, BOLD, Y, GOLD, DY, SUBTLE
 from pikabar.sprites import (
-    THINK_FRAMES, STREAM_FRAMES, TOOL_FRAMES,
-    SUBAGENT_FRAMES, COMPACT_FRAME, BALL_FRAMES,
+    IDLE_FRAMES, THINKING_SP, STAGING_SP, COMMITTED_SP,
+    RECOVERED_SP, HIT_SP, COMPACTED_SP, BALL_FRAMES,
 )
 from pikabar.info_panel import (
-    decorate_thinking, decorate_streaming, decorate_tool,
-    decorate_subagent, decorate_compact, decorate_ratelimit,
+    decorate_idle, decorate_thinking, decorate_staging,
+    decorate_committed, decorate_recovered, decorate_compacted,
+    decorate_hit, decorate_faint,
 )
 from pikabar.animator import animate, animate_unified
 
@@ -38,44 +41,47 @@ DEMO_SESSION = {
     "modified": 1,
     "hp_pct": 72,
     "hp_window": "5h",
-    "cost": 0.42,
-    "duration": 192,  # 3m12s
+    "pp_pct": 85,
 }
 
 # Session states for each demo segment
 SESSIONS = {
-    "thinking":    {**DEMO_SESSION, "hp_pct": 85},
-    "streaming":   {**DEMO_SESSION, "hp_pct": 72},
-    "tool_use":    {**DEMO_SESSION, "hp_pct": 55, "staged": 5, "modified": 2},
-    "subagent":    {**DEMO_SESSION, "hp_pct": 45, "cost": 1.20},
-    "compacting":  {**DEMO_SESSION, "hp_pct": 30, "cost": 2.50, "duration": 480},
-    "ratelimit":   {**DEMO_SESSION, "hp_pct": 0, "cost": 3.10, "duration": 720},
+    "idle":      {**DEMO_SESSION, "hp_pct": 85, "pp_pct": 95},
+    "thinking":  {**DEMO_SESSION, "hp_pct": 72, "pp_pct": 80},
+    "staging":   {**DEMO_SESSION, "hp_pct": 65, "pp_pct": 70, "staged": 5, "modified": 3},
+    "committed": {**DEMO_SESSION, "hp_pct": 60, "pp_pct": 65, "staged": 0, "modified": 0},
+    "recovered": {**DEMO_SESSION, "hp_pct": 90, "pp_pct": 60},
+    "compacted": {**DEMO_SESSION, "hp_pct": 45, "pp_pct": 90},
+    "hit":       {**DEMO_SESSION, "hp_pct": 20, "pp_pct": 40},
+    "faint":     {**DEMO_SESSION, "hp_pct": 0, "pp_pct": 30},
 }
 
 # Unified demo segments: (label, frames, fps, duration_secs, decorate_fn)
 UNIFIED_SEGMENTS = [
-    ("thinking",   THINK_FRAMES,    2,   4,  decorate_thinking),
-    ("streaming",  STREAM_FRAMES,   2.5, 5,  decorate_streaming),
-    ("tool_use",   TOOL_FRAMES,     4,   3,  decorate_tool),
-    ("streaming",  STREAM_FRAMES,   2.5, 3,  decorate_streaming),
-    ("tool_use",   TOOL_FRAMES,     4,   2,  decorate_tool),
-    ("subagent",   SUBAGENT_FRAMES, 2,   4,  decorate_subagent),
-    ("streaming",  STREAM_FRAMES,   2.5, 3,  decorate_streaming),
-    ("compacting", [COMPACT_FRAME], 1.5, 4,  decorate_compact),
-    ("thinking",   THINK_FRAMES,    2,   3,  decorate_thinking),
-    ("streaming",  STREAM_FRAMES,   2.5, 4,  decorate_streaming),
-    ("ratelimit",  BALL_FRAMES,     6,   5,  decorate_ratelimit),
+    ("idle",      IDLE_FRAMES,      2,   4, decorate_idle),
+    ("thinking",  [THINKING_SP],    2,   4, decorate_thinking),
+    ("staging",   [STAGING_SP],     2,   3, decorate_staging),
+    ("committed", [COMMITTED_SP],   2,   3, decorate_committed),
+    ("idle",      IDLE_FRAMES,      2,   3, decorate_idle),
+    ("thinking",  [THINKING_SP],    2,   3, decorate_thinking),
+    ("hit",       [HIT_SP],         2,   3, decorate_hit),
+    ("compacted", [COMPACTED_SP],   1.5, 4, decorate_compacted),
+    ("recovered", [RECOVERED_SP],   2,   3, decorate_recovered),
+    ("idle",      IDLE_FRAMES,      2,   3, decorate_idle),
+    ("faint",     BALL_FRAMES,      6,   5, decorate_faint),
 ]
 
 
 # Individual state configs: (name, frames, duration, fps, decorate_fn, session_key)
 STATES = {
-    "2": ("Thinking 💭",    THINK_FRAMES,    8,  2,   decorate_thinking,  "thinking"),
-    "3": ("Streaming ▍",   STREAM_FRAMES,   10, 2.5, decorate_streaming, "streaming"),
-    "4": ("Tool Use ⚡",    TOOL_FRAMES,     8,  4,   decorate_tool,      "tool_use"),
-    "5": ("Subagent ♥",    SUBAGENT_FRAMES, 8,  2,   decorate_subagent,  "subagent"),
-    "6": ("Compacting 💤",  [COMPACT_FRAME], 8,  1.5, decorate_compact,   "compacting"),
-    "7": ("Rate Limited 🔴", BALL_FRAMES,    8,  6,   decorate_ratelimit, "ratelimit"),
+    "2": ("Idle",       IDLE_FRAMES,      8,  2,   decorate_idle,      "idle"),
+    "3": ("Thinking",   [THINKING_SP],    8,  2,   decorate_thinking,  "thinking"),
+    "4": ("Staging",    [STAGING_SP],     8,  2,   decorate_staging,   "staging"),
+    "5": ("Committed",  [COMMITTED_SP],   8,  2,   decorate_committed, "committed"),
+    "6": ("Recovered",  [RECOVERED_SP],   8,  2,   decorate_recovered, "recovered"),
+    "7": ("Compacted",  [COMPACTED_SP],   8,  1.5, decorate_compacted, "compacted"),
+    "8": ("Hit",        [HIT_SP],         8,  2,   decorate_hit,       "hit"),
+    "9": ("Faint",      BALL_FRAMES,      8,  6,   decorate_faint,     "faint"),
 }
 
 
@@ -83,8 +89,8 @@ def main():
     print(f"\n{fg(GOLD)}{BOLD}{'=' * 56}")
     print(f"  pikabar — Pokemon-Style Statusline Demo")
     print(f"{'=' * 56}{RST}")
-    print(f"\n  {fg(GOLD)}0{RST} = Unified demo (all states in one view, loops)")
-    print(f"  {fg(GOLD)}1{RST} = All states separately")
+    print(f"\n  {fg(GOLD)}0{RST} = Unified demo (all reactions in one view, loops)")
+    print(f"  {fg(GOLD)}1{RST} = All reactions separately")
     for key in sorted(STATES.keys()):
         name = STATES[key][0]
         print(f"  {fg(GOLD)}{key}{RST} = {name}")

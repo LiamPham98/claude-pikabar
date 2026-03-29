@@ -1,56 +1,45 @@
 """Info panel layout — Pokemon-style statusline display.
 
-Layout (5 lines, info-above-sprite):
-  Line 0: Lv.N MODEL [badge] | branch +staged ~modified
-  Line 1: HP ############.... 72% 5h  P$0.42 3m12s  > flavor
-  Line 2: [sprite line 0]  [effects]
-  Line 3: [sprite line 1]  [effects]
-  Line 4: [sprite line 2]  [effects]
+Two-zone layout (5 lines):
+  Zone 1 (left): sprite + floating effects (above + beside)
+  Zone 2 (right): info text space-padded to INFO_COL
 
-Info lines (0-1) are pure ASCII/ANSI text — guaranteed alignment.
-Sprite lines (2-4) use half-block Unicode — may render wider in some
-terminals but no text alignment depends on them.
+  Line 0: [effects above sprite]           (no info — aligns left/right bottom)
+  Line 1: [sprite 0] [side effect]         [Lv.N MODEL badge | git]
+  Line 2: [sprite 1] [side effect]         [HP bar]
+  Line 3: [sprite 2] [side effect]         [PP bar]
+  Line 4: [pad / sprite 3 if Pokeball]     [extra/flavor]
+
+Effects REPLACE whitespace at fixed positions — never INSERT.
+Info is padded to INFO_COL via spaces (Ink.js does not support CSI CHA).
+
+8 reaction decorators (priority order):
+  faint > hit > compacted > thinking > recovered > committed > staging > idle
 """
 
-from .palette import fg, bg, RST, BOLD, SUBTLE, DIM, GOLD, GREEN, RD
-from .hp_bar import render_hp_line, get_badge, hp_color
+from .palette import fg, bg, RST, BOLD, SUBTLE, DIM, GOLD, GREEN, RD, visible_len
+from .hp_bar import render_hp_bar, render_pp_bar, get_badge
 from .flavor import get_flavor_text
 
-# Minimum output lines (padded if fewer). Demo = 5, statusline = 6 (with backdrop padding).
-MIN_LINES = 5
-
-# Sprite prefix (indentation for non-backdrop mode)
-SP = "  "
+# Layout constants
+SP = ""            # no left margin — flush to terminal left edge
+INFO_COL = 20      # absolute column where info text starts
+DECORATED_LINES = 5  # 1 above + 3 sprite + 1 pad (Pikachu) or 1 above + 4 sprite (Pokeball)
 
 
 # ============================================================
-# Model / git / cost formatters
+# Model / git formatters
 # ============================================================
 
 def format_model(model_id="", display_name=""):
-    """Format model as 'Lv.N SPECIES' (Pokemon style).
-
-    Uses display_name for species (e.g. "Opus" -> "OPUS")
-    and model_id for level (e.g. "claude-opus-4-6" -> first digit = 4).
-
-    Claude Code JSON provides:
-      model.id = "claude-opus-4-6"
-      model.display_name = "Opus"
-    """
+    """Format model as 'Lv.N SPECIES' (Pokemon style)."""
     import re
-
-    # Species from display_name — take first word only
-    # Claude Code sends "Opus 4.6 (1M context)", we just want "OPUS"
     species = display_name.split()[0].upper() if display_name else "CLAUDE"
-
-    # Level from model_id version number
     level = "?"
-    # Match pattern like "opus-4", "sonnet-4", "sonnet-3-5", "haiku-3-5"
     match = re.search(r'(?:opus|sonnet|haiku)-(\d+)', model_id.lower())
     if match:
         level = match.group(1)
-
-    return f"{fg(GOLD)}{BOLD}Lv.{level}{RST} {fg(GOLD)}{species}{RST}"
+    return f"{BOLD}Lv.{level}{RST} {BOLD}{species}{RST}"
 
 
 def format_git(branch=None, staged=0, modified=0):
@@ -65,149 +54,154 @@ def format_git(branch=None, staged=0, modified=0):
     return " ".join(parts)
 
 
-def format_cost_time(cost_usd=0.0, duration_secs=0):
-    """Format cost and duration: P$0.42 3m12s."""
-    cost = f"{fg(GREEN)}P${cost_usd:.2f}{RST}"
-    mins = duration_secs // 60
-    secs = duration_secs % 60
-    if mins > 0:
-        time_str = f"{fg(SUBTLE)}{mins}m{secs:02d}s{RST}"
+# ============================================================
+# Layout builder (two-zone with absolute column positioning)
+# ============================================================
+
+def _line(sprite, info_str, above_str=None, right_eff=""):
+    """Build one output line: zone 1 (sprite+effect) + zone 2 (info at INFO_COL).
+
+    Uses space-padding instead of CSI CHA (\\033[nG) because Ink.js
+    (Claude Code's terminal renderer) does not support absolute column
+    positioning. The sprite content width is measured after stripping
+    ANSI escapes, then padded to INFO_COL.
+
+    above_str: decoration-only line (no sprite, effects float above).
+    right_eff: effect chars placed right after sprite.
+    """
+    if above_str is not None:
+        zone1 = f"{SP}{above_str}"
     else:
-        time_str = f"{fg(SUBTLE)}{secs}s{RST}"
-    return f"{cost}  {time_str}"
+        zone1 = f"{SP}{sprite}{right_eff}"
+    # Pad zone 1 to INFO_COL (1-indexed), then append info
+    pad = max(1, INFO_COL - 1 - visible_len(zone1))
+    return f"{zone1}{' ' * pad}{info_str}"
 
 
-# ============================================================
-# Layout builder
-# ============================================================
-
-def _build(info_line0, info_line1, sprite_lines, sides=None):
-    """Standard builder: 2 info lines + N sprite lines.
+def _build(sprite_lines, info, above="", sides=None):
+    """Standard builder: 1 above + sprite + padding = DECORATED_LINES.
 
     Args:
-        info_line0: First info line (model, badge, git)
-        info_line1: Second info line (HP, cost, flavor)
-        sprite_lines: List of rendered sprite terminal lines (3 for demo, 4 with padding)
-        sides: Optional list of side effects per sprite line
+        sprite_lines: Rendered sprite terminal lines (3 for Pikachu, 4 for Pokeball).
+        info: List of info strings for zone 2 (6 items, indexed by line number).
+        above: Effect string for the line above sprite.
+        sides: List of side effect strings per sprite row.
     """
     lines = []
-    # Info lines (pure text, no half-blocks)
-    lines.append(f"{SP}{info_line0}")
-    lines.append(f"{SP}{info_line1}")
-    # Sprite lines (SP indents the whole sprite/backdrop block)
+    # Line 0: above effects + info[0] (normally empty)
+    info_0 = info[0] if len(info) > 0 else ""
+    lines.append(_line(None, info_0, above_str=above))
+
+    # Sprite lines with side effects + info
     for i, sp in enumerate(sprite_lines):
+        inf = info[i + 1] if (i + 1) < len(info) else ""
         eff = sides[i] if sides and i < len(sides) else ""
-        lines.append(f"{SP}{sp}{eff}")
-    while len(lines) < MIN_LINES:
-        lines.append("")
-    return lines
+        lines.append(_line(sp, inf, right_eff=eff))
+
+    # Pad to fixed height, continuing info on pad lines (PP bar, extra)
+    idx = len(lines)
+    while len(lines) < DECORATED_LINES:
+        inf = info[idx] if idx < len(info) else ""
+        if inf:
+            lines.append(_line("", inf))
+        else:
+            lines.append("")
+        idx += 1
+    return lines[:DECORATED_LINES]
 
 
 # ============================================================
-# Decoration functions per state
+# Common info builder
 # ============================================================
 
-def decorate_thinking(sprite_lines, tick, session=None):
-    """Thinking state: eyes glance, gentle tail sway."""
+def _info_lines(session, badge_override=None, line0_override=None, extra_override=None):
+    """Build the 5 right-column info strings.
+
+    Layout (5 lines):
+      [0] (empty)              above line — effects only, no info
+      [1] model + badge + git  sprite row 0
+      [2] HP bar               sprite row 1
+      [3] PP bar               sprite row 2
+      [4] extra/flavor         pad row
+    """
     s = session or {}
+    tick = s.get("_tick", 0)
 
-    model = format_model(s.get("model_id", ""), s.get("model_name", "Opus"))
-    badge = get_badge(s.get("hp_pct"), is_compacting=False)
-    git = format_git(s.get("branch"), s.get("staged", 0), s.get("modified", 0))
-    hp = render_hp_line(s.get("hp_pct"), s.get("hp_window"), tick=tick)
-    cost_time = format_cost_time(s.get("cost", 0), s.get("duration", 0))
+    # [1] Model + badge + git
+    if line0_override is not None:
+        model_line = line0_override
+    else:
+        model = format_model(s.get("model_id", ""), s.get("model_name", "Opus"))
+        if badge_override is not None:
+            badge = badge_override
+        else:
+            badge = get_badge(s.get("hp_pct"))
+        badge_str = f" {badge}" if badge else ""
+        git = format_git(s.get("branch"), s.get("staged", 0), s.get("modified", 0))
+        git_str = f" {fg(DIM)}|{RST} {git}" if git else ""
+        model_line = f"{model}{badge_str}{git_str}"
 
-    flavor, _ = get_flavor_text("thinking", s.get("hp_pct"), tick=tick)
-    flavor_str = f"  {fg(DIM)}>{RST} {fg(SUBTLE)}{flavor}{RST}" if flavor else ""
+    # [2] HP bar — "5h limit" or "7d limit" or just "limit"
+    hp = render_hp_bar(s.get("hp_pct"), tick=tick)
+    hp_window = s.get("hp_window")
+    if hp_window and s.get("hp_pct") is not None:
+        hp_label = f"{fg(SUBTLE)}{hp_window} limit{RST}"
+    else:
+        hp_label = f"{fg(SUBTLE)}limit{RST}"
+    hp_line = f"{hp} {hp_label}"
 
-    badge_str = f" {badge}" if badge else ""
-    git_str = f" {fg(DIM)}|{RST} {git}" if git else ""
+    # [3] PP bar — "ctx left"
+    pp = render_pp_bar(s.get("pp_pct"))
+    pp_label = f"{fg(SUBTLE)}ctx left{RST}"
+    pp_line = f"{pp} {pp_label}"
 
-    line0 = f"{model}{badge_str}{git_str}"
-    line1 = f"{hp}  {cost_time}{flavor_str}"
+    # [4] Extra line (override or empty)
+    extra = extra_override if extra_override is not None else ""
 
-    return _build(line0, line1, sprite_lines)
-
-
-def decorate_streaming(sprite_lines, tick, session=None):
-    """Streaming state: winking eye, text output."""
-    s = session or {}
-
-    model = format_model(s.get("model_id", ""), s.get("model_name", "Opus"))
-    badge = get_badge(s.get("hp_pct"))
-    git = format_git(s.get("branch"), s.get("staged", 0), s.get("modified", 0))
-    hp = render_hp_line(s.get("hp_pct"), s.get("hp_window"), tick=tick)
-    cost_time = format_cost_time(s.get("cost", 0), s.get("duration", 0))
-
-    flavor, _ = get_flavor_text("streaming", s.get("hp_pct"), tick=tick)
-    flavor_str = f"  {fg(DIM)}|{RST} {fg(GREEN)}>{RST}{fg(SUBTLE)} {flavor}{RST}" if flavor else f"  {fg(DIM)}|{RST} {fg(GREEN)}>{RST}{fg(SUBTLE)} Streaming...{RST}"
-
-    badge_str = f" {badge}" if badge else ""
-    git_str = f" {fg(DIM)}|{RST} {git}" if git else ""
-
-    line0 = f"{model}{badge_str}{git_str}"
-    line1 = f"{hp}  {cost_time}{flavor_str}"
-
-    return _build(line0, line1, sprite_lines)
+    return ["", model_line, hp_line, pp_line, extra]
 
 
-def decorate_tool(sprite_lines, tick, session=None):
-    """Tool Use state: lightning bolts around sprite."""
-    s = session or {}
+# ============================================================
+# Decoration functions per reaction
+# ============================================================
 
-    tools = s.get("tools", ["Read src/app.ts", "Grep 'handleError'",
-                             "Edit utils.ts", "Bash: npm test"])
-    tool = tools[tick % len(tools)] if tools else "Working..."
+def decorate_idle(sprite_lines, tick, session=None):
+    """Idle: calm, nothing notable."""
+    info = _info_lines(session)
+    return _build(sprite_lines, info)
 
-    model = format_model(s.get("model_id", ""), s.get("model_name", "Opus"))
-    badge = get_badge(s.get("hp_pct"))
-    git = format_git(s.get("branch"), s.get("staged", 0), s.get("modified", 0))
-    hp = render_hp_line(s.get("hp_pct"), s.get("hp_window"), tick=tick)
-    cost_time = format_cost_time(s.get("cost", 0), s.get("duration", 0))
 
-    badge_str = f" {badge}" if badge else ""
-    git_str = f" {fg(DIM)}|{RST} {git}" if git else ""
-
-    line0 = f"{model}{badge_str}{git_str}"
-    line1 = f"{hp}  {cost_time}  {fg(DIM)}|{RST} {fg(GOLD)}!{RST} {fg(SUBTLE)}{tool[:25]}{RST}"
-
-    # Lightning effects next to sprite
-    bc_list = [220, 178, 228, 220]
-    bc = bc_list[tick % len(bc_list)]
-    b = f"{fg(bc)}*{RST}"
+def decorate_staging(sprite_lines, tick, session=None):
+    """Staging: files changed or cost spike — sparkles beside sprite."""
+    sc_list = [228, 220, 230, 226]
+    sc = sc_list[tick % len(sc_list)]
+    spark = f"{fg(sc)}*{RST}"
 
     side_patterns = [
-        [f" {b}",  "",     f" {b}"],
-        ["",      f" {b}", ""],
-        [f" {b}", f" {b}", ""],
-        ["",      "",      f" {b}"],
+        [f" {spark}", "",          ""],
+        ["",          f" {spark}", ""],
+        ["",          "",          f" {spark}"],
+        [f" {spark}", "",          f" {spark}"],
     ]
     sides = side_patterns[tick % len(side_patterns)]
 
-    return _build(line0, line1, sprite_lines, sides=sides)
+    info = _info_lines(session)
+    return _build(sprite_lines, info, sides=sides)
 
 
-def decorate_subagent(sprite_lines, tick, session=None):
-    """Subagent state: hearts floating around sprite."""
-    s = session or {}
-    n_agents = s.get("n_agents", 3)
-    agents = s.get("agent_names", ["Dev", "QC", "UX"])
-    active = agents[tick % len(agents)] if agents else "Agent"
-
+def decorate_committed(sprite_lines, tick, session=None):
+    """Committed: hearts float above + beside sprite."""
     hc_list = [RD, 204, 197, 203]
     hc = hc_list[tick % len(hc_list)]
-    h = f"{fg(hc)}<3{RST}"
+    h = f"{fg(hc)}♥{RST}"
 
-    model = format_model(s.get("model_id", ""), s.get("model_name", "Opus"))
-    badge = get_badge(s.get("hp_pct"))
-    hp = render_hp_line(s.get("hp_pct"), s.get("hp_window"), tick=tick)
-    cost_time = format_cost_time(s.get("cost", 0), s.get("duration", 0))
-
-    hearts = f"{fg(RD)}{'<3 ' * n_agents}{RST}"
-    badge_str = f" {badge}" if badge else ""
-
-    line0 = f"{model}{badge_str} {fg(DIM)}|{RST} {hearts}"
-    line1 = f"{hp}  {cost_time}  {fg(DIM)}|{RST} {fg(GREEN)}{active}{RST} {fg(SUBTLE)}working...{RST}"
+    above_patterns = [
+        f"        {h}      {h}",
+        f"     {h}        {h}",
+        f"          {h}  {h}",
+        f"    {h}    {h}",
+    ]
+    above = above_patterns[tick % len(above_patterns)]
 
     side_patterns = [
         [f" {h}", "",     ""],
@@ -217,32 +211,72 @@ def decorate_subagent(sprite_lines, tick, session=None):
     ]
     sides = side_patterns[tick % len(side_patterns)]
 
-    return _build(line0, line1, sprite_lines, sides=sides)
+    info = _info_lines(session)
+    return _build(sprite_lines, info, above=above, sides=sides)
 
 
-def decorate_compact(sprite_lines, tick, session=None):
-    """Compacting state: sleeping Pikachu with ZZZ."""
+def decorate_recovered(sprite_lines, tick, session=None):
+    """Recovered: green sparkles beside sprite."""
+    sc_list = [114, 156, 150, 120]
+    sc = sc_list[tick % len(sc_list)]
+    spark = f"{fg(sc)}✦{RST}"
+
+    side_patterns = [
+        [f" {spark}", "",          ""],
+        ["",          f" {spark}", ""],
+        ["",          "",          f" {spark}"],
+        ["",          f" {spark}", ""],
+    ]
+    sides = side_patterns[tick % len(side_patterns)]
+
+    info = _info_lines(session)
+    return _build(sprite_lines, info, sides=sides)
+
+
+def decorate_thinking(sprite_lines, tick, session=None):
+    """Thinking: lightning ⚡ above + beside sprite."""
+    bc_list = [220, 178, 228, 220]
+    bc = bc_list[tick % len(bc_list)]
+    b = f"{fg(bc)}⚡{RST}"
+
+    above_patterns = [
+        f"       {b}     {b}",
+        f"    {b}        {b}",
+        f"         {b}  {b}",
+        f"   {b}    {b}",
+    ]
+    above = above_patterns[tick % len(above_patterns)]
+
+    side_patterns = [
+        ["",     f" {b}",  ""],
+        [f" {b}", "",      f" {b}"],
+        ["",     f" {b}",  f" {b}"],
+        [f" {b}", f" {b}", ""],
+    ]
+    sides = side_patterns[tick % len(side_patterns)]
+
+    info = _info_lines(session)
+    return _build(sprite_lines, info, above=above, sides=sides)
+
+
+def decorate_compacted(sprite_lines, tick, session=None):
+    """Compacted: ZZZ float above + beside sleeping sprite."""
     s = session or {}
-
-    model = format_model(s.get("model_id", ""), s.get("model_name", "Opus"))
     badge = get_badge(s.get("hp_pct"), is_compacting=True)
-    hp = render_hp_line(s.get("hp_pct"), s.get("hp_window"), tick=tick)
-    cost_time = format_cost_time(s.get("cost", 0), s.get("duration", 0))
 
-    flavor, _ = get_flavor_text("compacting", s.get("hp_pct"), tick=tick)
-    flavor_str = f"  {fg(DIM)}>{RST} {fg(SUBTLE)}{flavor}{RST}" if flavor else ""
-
-    badge_str = f" {badge}" if badge else ""
-
-    line0 = f"{model}{badge_str}"
-    line1 = f"{hp}  {cost_time}{flavor_str}"
-
-    # ZZZ effects next to sprite
     z_cycle = tick % 4
     zc_list = [240, 245, 250, 245]
     zc = zc_list[z_cycle]
-    z = f"{fg(zc)}z{RST}"
 
+    z_above = [
+        f"               {fg(250)}Z{RST}",
+        f"             {fg(245)}Z{RST}  {fg(250)}Z{RST}",
+        f"           {fg(240)}z{RST}  {fg(245)}Z{RST}  {fg(250)}Z{RST}",
+        f"             {fg(240)}z{RST}  {fg(245)}Z{RST}",
+    ]
+    above = z_above[z_cycle]
+
+    z = f"{fg(zc)}z{RST}"
     side_patterns = [
         [f" {z}", "",    ""],
         ["",     f" {z}", ""],
@@ -251,25 +285,67 @@ def decorate_compact(sprite_lines, tick, session=None):
     ]
     sides = side_patterns[z_cycle]
 
-    return _build(line0, line1, sprite_lines, sides=sides)
+    info = _info_lines(session, badge_override=badge)
+    return _build(sprite_lines, info, above=above, sides=sides)
 
 
-def decorate_ratelimit(sprite_lines, tick, session=None):
-    """Rate Limited state: Pokeball wobble, retry countdown."""
+def decorate_hit(sprite_lines, tick, session=None):
+    """Hit: sweat drops beside sprite."""
     s = session or {}
+    badge = get_badge(s.get("hp_pct"))
+
+    sw_list = [117, 153, 159, 153]
+    sw = sw_list[tick % len(sw_list)]
+    drop = f"{fg(sw)};{RST}"
+
+    side_patterns = [
+        [f" {drop}", "",         ""],
+        ["",         f" {drop}", ""],
+        [f" {drop}", "",         f" {drop}"],
+        ["",         "",         f" {drop}"],
+    ]
+    sides = side_patterns[tick % len(side_patterns)]
+
+    info = _info_lines(session, badge_override=badge)
+    return _build(sprite_lines, info, sides=sides)
+
+
+def decorate_faint(sprite_lines, tick, session=None):
+    """Faint: Pokeball, retry countdown, no effects."""
+    s = session or {}
+    badge = get_badge(0, is_rate_limited=True)
     mins = s.get("retry_min", max(1, 4 - (tick // 6)))
 
-    model = format_model(s.get("model_id", ""), s.get("model_name", "Opus"))
-    badge = get_badge(0, is_rate_limited=True)  # HP=0 when rate limited
-    hp = render_hp_line(0, s.get("hp_window"), tick=tick)  # HP = 0
-    cost_time = format_cost_time(s.get("cost", 0), s.get("duration", 0))
+    retry_line = f"{fg(SUBTLE)}Retry ~{mins}m{RST}"
+    info = _info_lines(session, badge_override=badge, extra_override=retry_line)
+    return _build(sprite_lines, info)
 
-    flavor, _ = get_flavor_text("ratelimited", hp_pct=0, tick=tick)
-    flavor_str = f"  {fg(DIM)}>{RST} {fg(SUBTLE)}{flavor}{RST}" if flavor else ""
 
-    badge_str = f" {badge}" if badge else ""
+# ============================================================
+# Reaction dispatcher
+# ============================================================
 
-    line0 = f"{model}{badge_str} {fg(DIM)}|{RST} {fg(SUBTLE)}Retry ~{mins}m{RST}"
-    line1 = f"{hp}  {cost_time}{flavor_str}"
+DECORATORS = {
+    "idle":      decorate_idle,
+    "staging":   decorate_staging,
+    "committed": decorate_committed,
+    "recovered": decorate_recovered,
+    "thinking":  decorate_thinking,
+    "compacted": decorate_compacted,
+    "hit":       decorate_hit,
+    "faint":     decorate_faint,
+}
 
-    return _build(line0, line1, sprite_lines)
+
+def decorate(reaction, sprite_lines, tick, session=None):
+    """Dispatch to the correct decorator for a reaction."""
+    fn = DECORATORS.get(reaction, decorate_idle)
+    return fn(sprite_lines, tick, session=session)
+
+
+# Backwards-compat aliases
+def decorate_compact(sprite_lines, tick, session=None):
+    return decorate_compacted(sprite_lines, tick, session=session)
+
+def decorate_ratelimit(sprite_lines, tick, session=None):
+    return decorate_faint(sprite_lines, tick, session=session)

@@ -1,7 +1,9 @@
-"""HP bar and status badge rendering.
+"""HP and PP bar rendering + status badges.
 
 HP = Rate limit quota REMAINING (100 - used%).
-Full HP = safe. Empty HP = rate limited (paralyzed).
+     Full HP = safe. Empty HP = rate limited.
+PP = Context window REMAINING (100 - used%).
+     Full PP = fresh context. Empty PP = compaction imminent.
 """
 
 from .palette import (
@@ -10,12 +12,13 @@ from .palette import (
     BADGE_PAR, BADGE_SLP, BADGE_PSN, BADGE_BRN, BADGE_FRZ,
 )
 
-# Bar dimensions
-BAR_WIDTH = 16
-# Use ASCII-safe characters for Claude Code compatibility
-# (Unicode block elements render double-wide in Ink.js)
-BAR_FILL = "#"
-BAR_EMPTY = "."
+# Bar dimensions (shorter to fit both HP + PP on one line)
+BAR_WIDTH = 10
+BAR_FILL = "█"
+BAR_EMPTY = "░"
+
+# PP bar fixed color (steel blue — distinct from HP's green/yellow/red)
+PP_COLOR = 75
 
 
 def hp_color(hp_pct):
@@ -29,18 +32,8 @@ def hp_color(hp_pct):
 
 
 def render_hp_bar(hp_pct, tick=0, width=BAR_WIDTH):
-    """Render the HP bar string.
-
-    Args:
-        hp_pct: HP remaining (0-100). None if no data.
-        tick: animation tick for flash effect at critical HP.
-        width: bar width in characters.
-
-    Returns:
-        Formatted string like "HP ████████████░░░░ 72% 5h"
-    """
+    """Render the HP bar: HP ██████░░░░ 64%"""
     if hp_pct is None:
-        # No rate limit data available
         unknown = "?" * width
         return f"{fg(SUBTLE)}HP {fg(DIM)}{unknown}{RST} {fg(SUBTLE)}---{RST}"
 
@@ -52,26 +45,28 @@ def render_hp_bar(hp_pct, tick=0, width=BAR_WIDTH):
 
     # Flash effect at critical HP (<5%)
     if hp_pct < 5 and tick % 2 == 1:
-        color = DIM  # alternate between red and dim
+        color = DIM
 
     bar = f"{fg(color)}{BAR_FILL * filled}{fg(DIM)}{BAR_EMPTY * empty}{RST}"
-    pct_str = f"{fg(color)}{hp_pct}%{RST}"
+    pct_str = f"{fg(color)}{hp_pct:>3}%{RST}"
 
     return f"{fg(SUBTLE)}HP{RST} {bar} {pct_str}"
 
 
-def render_hp_line(hp_pct, window_label=None, tick=0):
-    """Render the full HP line including rate window label.
+def render_pp_bar(pp_pct, width=BAR_WIDTH):
+    """Render the PP bar: PP ████████░░ 80%"""
+    if pp_pct is None:
+        unknown = "?" * width
+        return f"{fg(SUBTLE)}PP {fg(DIM)}{unknown}{RST} {fg(SUBTLE)}---{RST}"
 
-    Args:
-        hp_pct: HP remaining (0-100). None if no data.
-        window_label: "5h" or "7d" — which rate window is binding.
-        tick: animation tick.
-    """
-    bar = render_hp_bar(hp_pct, tick=tick)
-    if window_label and hp_pct is not None:
-        return f"{bar} {fg(SUBTLE)}{window_label}{RST}"
-    return bar
+    pp_pct = max(0, min(100, pp_pct))
+    filled = int(width * pp_pct / 100)
+    empty = width - filled
+
+    bar = f"{fg(PP_COLOR)}{BAR_FILL * filled}{fg(DIM)}{BAR_EMPTY * empty}{RST}"
+    pct_str = f"{fg(PP_COLOR)}{pp_pct:>3}%{RST}"
+
+    return f"{fg(SUBTLE)}PP{RST} {bar} {pct_str}"
 
 
 # ============================================================

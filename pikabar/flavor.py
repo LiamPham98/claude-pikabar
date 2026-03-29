@@ -2,67 +2,89 @@
 
 Voice: Pokemon game narrator, third-person present tense.
 Max 28 chars per message to fit the info panel layout.
+
+8 reaction pools + easter eggs.
 """
 
 import random
 from datetime import datetime
 
 # ============================================================
-# State-specific flavor text pools (8 per state)
+# Reaction-specific flavor text pools (8 per reaction)
 # ============================================================
 
 FLAVOR = {
+    "idle": [
+        "What will PIKACHU do?",
+        "PIKACHU is waiting...",
+        "Ready for battle.",
+        "Standing by...",
+        "PIKACHU is alert.",
+        "Awaiting orders...",
+        "The field is quiet.",
+        "PIKACHU looks around.",
+    ],
     "thinking": [
         "PIKACHU used FOCUS.",
         "PIKACHU is thinking...",
-        "What will PIKACHU do?",
-        "Weighing the options...",
         "PIKACHU used DETECT!",
         "Analyzing the field...",
         "A careful approach...",
         "PIKACHU is strategizing.",
+        "Weighing the options...",
+        "Deep in thought...",
     ],
-    "streaming": [
-        "It's super effective!",
-        "PIKACHU used REPLY!",
-        "A direct hit!",
-        "Building momentum...",
-        "PIKACHU used SWIFT!",
-        "The attack continues!",
-        "Rapid fire!",
-        "PIKACHU strikes again!",
+    "staging": [
+        "PIKACHU is on alert!",
+        "Something's happening...",
+        "PIKACHU senses change!",
+        "The field is shifting.",
+        "PIKACHU used AGILITY!",
+        "Changes detected!",
+        "Activity in the area...",
+        "PIKACHU perked up!",
     ],
-    "tool_use": [
-        "PIKACHU used THUNDERBOLT!",
-        "A critical hit!",
-        "PIKACHU used DISCHARGE!",
-        "Sparks are flying!",
-        "PIKACHU used ELECTROWEB!",
-        "Hit after hit!",
-        "PIKACHU used IRON TAIL!",
-        "The tools are charged!",
+    "committed": [
+        "PIKACHU gained EXP!",
+        "PIKACHU leveled up!",
+        "Commit captured!",
+        "PIKACHU is pleased!",
+        "A wild commit appeared!",
+        "Saved the game!",
+        "PIKACHU used CELEBRATE!",
+        "Victory fanfare!",
     ],
-    "subagent": [
-        "Go! SUBAGENT!",
-        "Teamwork in action!",
-        "PIKACHU called for help!",
-        "Ally PIKACHU appeared!",
-        "A coordinated attack!",
-        "The party grows!",
-        "PIKACHU used HELPING HAND!",
-        "Comrades join the fight!",
+    "recovered": [
+        "HP was restored!",
+        "Energy recovered!",
+        "Rate limit reset!",
+        "Back to full power!",
+        "PIKACHU recovered fully.",
+        "Moves fully recharged!",
+        "Feeling refreshed!",
+        "PIKACHU is revitalized!",
     ],
-    "compacting": [
-        "PIKACHU is resting...",
-        "Healing at the center.",
-        "Nurse Joy is helping.",
-        "Recovering memories...",
-        "Saved the game.",
-        "A brief intermission...",
+    "compacted": [
+        "PIKACHU woke up!",
+        "...Where am I?",
+        "Memory was cleared!",
+        "Hm? What happened?",
+        "PIKACHU is confused!",
+        "Context was compacted.",
         "PIKACHU used REST!",
-        "Sweet dreams...",
+        "Recovering memories...",
     ],
-    "ratelimited": [
+    "hit": [
+        "It's super effective!",
+        "PIKACHU took damage!",
+        "PIKACHU flinched!",
+        "A heavy blow!",
+        "Rate limit pressure!",
+        "PIKACHU is struggling.",
+        "That really hurt...",
+        "HP dropping fast!",
+    ],
+    "faint": [
         "PIKACHU can't move!",
         "It's fully paralyzed!",
         "Out of PP entirely.",
@@ -151,7 +173,7 @@ NUMBER_EGGS = {
 
 def get_flavor_text(state, hp_pct=None, cost_usd=0.0, duration_min=0,
                     tick=0, chance=0.08):
-    """Get flavor text for the current state.
+    """Get flavor text for the current reaction state.
 
     Priority order:
     1. Date-based easter eggs (always fire)
