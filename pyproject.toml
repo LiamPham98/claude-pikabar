@@ -27,9 +27,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/anthropic-claude/claude-pikabar"
-Repository = "https://github.com/anthropic-claude/claude-pikabar"
-Issues = "https://github.com/anthropic-claude/claude-pikabar/issues"
+Homepage = "https://github.com/fioenix/claude-pikabar"
+Repository = "https://github.com/fioenix/claude-pikabar"
+Issues = "https://github.com/fioenix/claude-pikabar/issues"
 
 [project.scripts]
 pikabar = "pikabar.statusline:main"

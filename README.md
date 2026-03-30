@@ -26,7 +26,7 @@ Turn your rate limits into a Pokemon battle HUD. Pikachu reacts to your coding s
 ### 1. Clone
 
 ```bash
-git clone https://github.com/anthropic-claude/claude-pikabar.git ~/.claude/pikabar
+git clone https://github.com/fioenix/claude-pikabar.git ~/.claude/pikabar
 ```
 
 ### 2. Configure Claude Code
