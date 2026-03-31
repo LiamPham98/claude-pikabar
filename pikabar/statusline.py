@@ -235,6 +235,15 @@ def render_statusline(data):
 
 
 def main():
+    if sys.stdin.isatty():
+        print("pikabar: no input on stdin — nothing to render.")
+        print("This script is called by Claude Code, not directly.")
+        print()
+        print("  Quick start:  pikabar install")
+        print("  Manual test:  echo '{}' | python3 pikabar/statusline.py")
+        print("  Demo mode:    python3 demo.py")
+        sys.exit(0)
+
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
