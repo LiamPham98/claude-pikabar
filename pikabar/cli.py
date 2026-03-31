@@ -39,7 +39,7 @@ def _save_settings(settings):
     """Write settings.json (create ~/.claude/ if needed)."""
     os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
     with open(SETTINGS_PATH, "w") as f:
-        json.dump(settings, f, indent=2)
+        json.dump(settings, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
 
