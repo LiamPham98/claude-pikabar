@@ -31,14 +31,28 @@ DECORATED_LINES = 5  # 1 above + 3 sprite + 1 pad (Pikachu) or 1 above + 4 sprit
 # Model / git formatters
 # ============================================================
 
-def format_model(model_id="", display_name="", streak_days=0):
-    """Format model as 'Lv.N SPECIES' (Pokemon style) + optional streak flame."""
+def format_model(model_id="", display_name="", streak_days=0, pokemon_name=None):
+    """Format model as 'Lv.N SPECIES' (Pokemon style) + optional streak flame.
+
+    Args:
+        model_id: Full model ID string (e.g., "claude-opus-4-6")
+        display_name: Display name from Claude Code (e.g., "Opus 4")
+        streak_days: Consecutive active days for flame indicator
+        pokemon_name: Pokemon species name to display (pichu, pikachu, raichu)
+                    If None, derives from display_name like before.
+    """
     import re
-    species = display_name.split()[0].upper() if display_name else "CLAUDE"
     level = "?"
     match = re.search(r'(?:opus|sonnet|haiku)-(\d+)', model_id.lower())
     if match:
         level = match.group(1)
+
+    # Use Pokemon species name if provided, otherwise fallback to model name
+    if pokemon_name:
+        species = pokemon_name.upper()
+    else:
+        species = display_name.split()[0].upper() if display_name else "CLAUDE"
+
     base = f"{BOLD}Lv.{level}{RST} {BOLD}{species}{RST}"
     if streak_days >= 2:
         # Flame color escalates: 2-4 = orange, 5-9 = red-orange, 10+ = bright red
@@ -154,8 +168,12 @@ def _info_lines(session, badge_override=None, line0_override=None, extra_overrid
         model_line = line0_override
     else:
         streak = s.get("streak_days", 0)
-        model = format_model(s.get("model_id", ""), s.get("model_name", "Opus"),
-                             streak_days=streak)
+        model = format_model(
+            s.get("model_id", ""),
+            s.get("model_name", "Opus"),
+            streak_days=streak,
+            pokemon_name=s.get("pokemon_name"),
+        )
         if badge_override is not None:
             badge = badge_override
         else:
@@ -186,14 +204,15 @@ def _info_lines(session, badge_override=None, line0_override=None, extra_overrid
     pp_line = f"{pp} {pp_label}"
 
     # [4] Extra line: override > session greeting > critical HP drama > flavor > empty
+    pokemon_name = s.get("pokemon_name", "Pikachu")
     if extra_override is not None:
         extra = extra_override
     elif "session_start" in s.get("events", []):
         # Feature 1: Session greeting on first call
-        extra = f"{fg(228)}{get_session_greeting()}{RST}"
+        extra = f"{fg(228)}{get_session_greeting(pokemon_name)}{RST}"
     elif hp_pct is not None and hp_pct < 10:
         # Feature 4: Critical HP drama flavor text
-        extra = f"{fg(RD)}{get_critical_flavor()}{RST}"
+        extra = f"{fg(RD)}{get_critical_flavor(pokemon_name)}{RST}"
     else:
         extra = ""
 

@@ -75,38 +75,15 @@ def make_snapshot(hp_pct, hp_window, context_pct,
 SHINY_CHANCE = 1 / 1024  # 2^10, Nintendo-style power-of-2
 
 
-def check_shiny(prev_state, session_id):
-    """Roll for shiny per session_id. Persists across calls within a session.
+def check_shiny(prev_state):
+    """Roll for shiny on session start. Persists across calls within a session.
 
-    Stores a dict of {session_id: bool} in state. Each session gets one
-    roll — switching between sessions preserves their individual shiny flag.
-    Session A shiny, session B not shiny, back to A = still shiny.
+    Returns True if shiny. If prev_state has shiny=True, propagate it.
+    If no prev_state (new session), roll 1/500.
     """
-    shiny_map = {}
     if prev_state is not None:
-        shiny_map = prev_state.get("shiny_map", {})
-        # Migrate old single-bool format
-        if "shiny" in prev_state and not shiny_map:
-            old_sid = prev_state.get("session_id", "")
-            if old_sid:
-                shiny_map[old_sid] = prev_state["shiny"]
-
-    if not session_id:
-        return random.random() < SHINY_CHANCE, shiny_map
-
-    if session_id in shiny_map:
-        return shiny_map[session_id], shiny_map
-
-    # New session — roll
-    is_shiny = random.random() < SHINY_CHANCE
-    shiny_map[session_id] = is_shiny
-
-    # Keep map small: max 20 sessions
-    if len(shiny_map) > 20:
-        oldest = list(shiny_map.keys())[0]
-        del shiny_map[oldest]
-
-    return is_shiny, shiny_map
+        return prev_state.get("shiny", False)
+    return random.random() < SHINY_CHANCE
 
 
 # ============================================================
@@ -152,6 +129,85 @@ def _safe_sub(a, b):
     if a is None or b is None:
         return None
     return a - b
+
+
+# ============================================================
+# Model → Species mapping (Feature 2)
+# ============================================================
+
+MODEL_SPECIES_MAP = {
+    "opus":   "pikachu",
+    "sonnet": "pikachu",
+    "haiku":  "pichu",
+}
+
+EVOLUTION_STAGES = ["pichu", "pikachu", "raichu"]
+
+EVOLUTION_THRESHOLDS = {
+    "pichu":   {"cost": 1.0},   # ~1 session worth of usage
+    "pikachu": {"cost": 10.0},  # ~10 sessions worth of usage
+}
+
+
+def get_species_for_model(model_id, evolution_stage=0):
+    """Derive base species from model_id, then apply evolution stage.
+
+    Evolution stage overrides the base species if the Pokemon has evolved
+    from its starter form (e.g., Haiku starts as Pichu but can evolve).
+
+    Args:
+        model_id: Full model ID string (e.g., "claude-opus-4-6")
+        evolution_stage: 0=pichu, 1=pikachu, 2=raichu (or -1=unknown)
+
+    Returns:
+        Species key string ("pichu", "pikachu", or "raichu")
+    """
+    # Determine base species from model
+    base = "pikachu"  # default
+    model_lower = model_id.lower()
+    for key, species in MODEL_SPECIES_MAP.items():
+        if key in model_lower:
+            base = species
+            break
+
+    # Apply evolution stage
+    if evolution_stage > 0 and evolution_stage < len(EVOLUTION_STAGES):
+        return EVOLUTION_STAGES[evolution_stage]
+    return base
+
+
+def check_evolution(prev_state, cur_snapshot):
+    """Check if current Pokemon should evolve.
+
+    Evolution happens when:
+    - Pichu reaches $1.00 cumulative cost
+    - Pikachu reaches $10.00 cumulative cost
+
+    Args:
+        prev_state: Previous state snapshot (None on session start)
+        cur_snapshot: Current snapshot being built
+
+    Returns:
+        Tuple of (evolved: bool, new_stage: int)
+    """
+    # Get current stage (0=pichu, 1=pikachu, 2=raichu)
+    stage = cur_snapshot.get("evolution_stage", 0)
+    species = cur_snapshot.get("species", "pikachu")
+
+    # Check if there's a next evolution available
+    threshold = EVOLUTION_THRESHOLDS.get(species)
+    if threshold is None:
+        # Already at final form (Raichu)
+        return False, stage
+
+    # Check all threshold conditions
+    for key, required in threshold.items():
+        if cur_snapshot.get(key, 0) < required:
+            return False, stage
+
+    # All conditions met — evolve!
+    new_stage = stage + 1
+    return True, new_stage
 
 
 def compute_deltas(prev, cur):

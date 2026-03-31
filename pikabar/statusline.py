@@ -29,18 +29,16 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pikabar.renderer import grid_to_lines
-from pikabar.sprites import (
-    IDLE_FRAMES, THINKING_SP, STAGING_SP, COMMITTED_SP,
-    RECOVERED_SP, HIT_SP, COMPACTED_SP, BALL_FRAMES,
-    SHINY_IDLE_FRAMES, SHINY_THINKING_SP, SHINY_STAGING_SP,
-    SHINY_COMMITTED_SP, SHINY_RECOVERED_SP, SHINY_HIT_SP,
-    SHINY_COMPACTED_SP,
-)
 from pikabar.info_panel import decorate
 from pikabar.delta import (
     load_state, save_state, make_snapshot,
     compute_deltas, infer_events, pick_reaction,
     check_shiny, compute_streak,
+    get_species_for_model, check_evolution, EVOLUTION_STAGES,
+)
+from pikabar.sprites import (
+    POKEMON_SPECIES, get_species_sprites,
+    BALL_FRAMES,
 )
 
 # --- Temp file paths ---
@@ -48,27 +46,16 @@ FRAME_FILE = "/tmp/pikabar-frame"
 GIT_CACHE_FILE = "/tmp/pikabar-git-cache"
 GIT_CACHE_MAX_AGE = 5  # seconds
 
-# --- Reaction → sprite mapping ---
-REACTION_SPRITES = {
-    "idle":      None,  # uses IDLE_FRAMES[frame % N]
-    "thinking":  THINKING_SP,
-    "staging":   STAGING_SP,
-    "committed": COMMITTED_SP,
-    "recovered": RECOVERED_SP,
-    "hit":       HIT_SP,
-    "compacted": COMPACTED_SP,
-    "faint":     None,  # uses BALL_FRAMES[frame % N]
-}
-
-SHINY_REACTION_SPRITES = {
-    "idle":      None,  # uses SHINY_IDLE_FRAMES
-    "thinking":  SHINY_THINKING_SP,
-    "staging":   SHINY_STAGING_SP,
-    "committed": SHINY_COMMITTED_SP,
-    "recovered": SHINY_RECOVERED_SP,
-    "hit":       SHINY_HIT_SP,
-    "compacted": SHINY_COMPACTED_SP,
-    "faint":     None,  # pokeball is pokeball, shiny or not
+# --- Reaction → sprite key mapping (species-agnostic) ---
+REACTION_KEYS = {
+    "idle":      "idle_frames",
+    "thinking":  "thinking",
+    "staging":   "staging",
+    "committed": "committed",
+    "recovered": "recovered",
+    "hit":       "hit",
+    "compacted": "compacted",
+    "faint":     "faint",  # special: uses BALL_FRAMES
 }
 
 
@@ -149,17 +136,28 @@ def compute_hp(data):
         return max(0, int(100 - seven_d)), "7d"
 
 
-def get_sprite(reaction, frame, shiny=False):
-    """Select the appropriate sprite grid for a reaction."""
+def get_sprite(reaction, frame, shiny=False, species="pikachu"):
+    """Select the appropriate sprite grid for a reaction and species.
+
+    Args:
+        reaction: Reaction name (idle, thinking, staging, committed, etc.)
+        frame: Frame counter for idle animation cycling
+        shiny: Whether to use shiny variant
+        species: Pokemon species key (pichu, pikachu, raichu)
+
+    Returns:
+        6x15 pixel grid (list of lists)
+    """
     if reaction == "faint":
         return BALL_FRAMES[frame % len(BALL_FRAMES)]
-    if shiny:
-        if reaction == "idle":
-            return SHINY_IDLE_FRAMES[frame % len(SHINY_IDLE_FRAMES)]
-        return SHINY_REACTION_SPRITES.get(reaction, SHINY_IDLE_FRAMES[0])
-    if reaction == "idle":
-        return IDLE_FRAMES[frame % len(IDLE_FRAMES)]
-    return REACTION_SPRITES.get(reaction, IDLE_FRAMES[0])
+
+    sprites = get_species_sprites(species, shiny=shiny)
+    key = REACTION_KEYS.get(reaction, "idle_frames")
+
+    if key == "idle_frames":
+        frames = sprites["idle_frames"]
+        return frames[frame % len(frames)]
+    return sprites.get(key, sprites["idle_frames"][0])
 
 
 def render_statusline(data):
@@ -189,16 +187,44 @@ def render_statusline(data):
     deltas = compute_deltas(prev_state, snapshot)
     events = infer_events(deltas, snapshot, prev_state)
 
-    # --- Feature 3: Shiny Pikachu (1/1024 per session) ---
-    session_id = data.get("session_id", "")
-    is_shiny, shiny_map = check_shiny(prev_state, session_id)
-    snapshot["shiny_map"] = shiny_map
-    snapshot["session_id"] = session_id
+    # --- Feature 3: Shiny (1/1024 per session) ---
+    is_shiny = check_shiny(prev_state)
+    snapshot["shiny"] = is_shiny
 
     # --- Feature 5: Streak counter (consecutive active days) ---
     streak_days, last_active = compute_streak(prev_state)
     snapshot["streak"] = streak_days
     snapshot["last_active"] = last_active
+
+    # --- Feature 2 & 6: Species + Evolution ---
+    # Get previous evolution stage (0=pichu, 1=pikachu, 2=raichu)
+    evolution_stage = prev_state.get("evolution_stage", 0) if prev_state else 0
+    # Derive base species from model_id
+    base_species = get_species_for_model(model_id, evolution_stage)
+
+    # Copy cumulative state from prev_state for evolution check
+    # (snapshot.cost is fresh from this call; prev_state.cost is cumulative)
+    if prev_state:
+        snapshot["cost"] = prev_state.get("cost", 0)
+        snapshot["dur"] = prev_state.get("dur", 0)
+    snapshot["species"] = base_species
+    snapshot["evolution_stage"] = evolution_stage
+
+    # Check for evolution on session start
+    # Evolution is checked whenever we have existing state
+    # (prev_state may exist from previous call, but we still check thresholds)
+    just_evolved = False
+    evolved, new_stage = check_evolution(prev_state, snapshot)
+    if evolved:
+        evolution_stage = new_stage
+        base_species = EVOLUTION_STAGES[new_stage]
+        snapshot["evolution_stage"] = evolution_stage
+        snapshot["species"] = base_species
+        just_evolved = True
+
+    # Get final species (base + shiny modifier for display)
+    species = base_species
+    pokemon_name = POKEMON_SPECIES[species]["name"]
 
     save_state(snapshot, cwd)
 
@@ -212,6 +238,10 @@ def render_statusline(data):
     session = {
         "model_id": model_id,
         "model_name": model_name,
+        "species": species,
+        "pokemon_name": pokemon_name,
+        "evolution_stage": evolution_stage,
+        "just_evolved": just_evolved,
         "hp_pct": hp_pct,
         "hp_window": hp_window,
         "pp_pct": pp_pct,
@@ -228,7 +258,7 @@ def render_statusline(data):
     }
 
     # --- Select sprite and decorate ---
-    sprite_grid = get_sprite(reaction, frame, shiny=is_shiny)
+    sprite_grid = get_sprite(reaction, frame, shiny=is_shiny, species=species)
     sprite_lines = grid_to_lines(sprite_grid)
     output_lines = decorate(reaction, sprite_lines, frame, session=session)
 
