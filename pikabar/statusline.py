@@ -190,7 +190,7 @@ def render_statusline(data):
     events = infer_events(deltas, snapshot, prev_state)
 
     # --- Feature 3: Shiny Pikachu (1/500 per session) ---
-    is_shiny = check_shiny(prev_state)
+    is_shiny = check_shiny(prev_state, events)
     snapshot["shiny"] = is_shiny
 
     # --- Feature 5: Streak counter (consecutive active days) ---

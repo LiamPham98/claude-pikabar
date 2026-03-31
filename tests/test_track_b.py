@@ -76,19 +76,28 @@ def test_committed_confetti_has_variety():
 # Feature 3: Shiny Pikachu
 # ============================================================
 
-def test_shiny_propagates_from_prev_state():
-    """If prev state is shiny, current stays shiny."""
-    assert check_shiny({"shiny": True}) is True
-    assert check_shiny({"shiny": False}) is False
+def test_shiny_propagates_within_session():
+    """Mid-session (no session_start): propagate shiny flag from state."""
+    assert check_shiny({"shiny": True}, []) is True
+    assert check_shiny({"shiny": False}, []) is False
 
 
-def test_shiny_new_session_rolls():
-    """New session (no prev state) rolls for shiny."""
+def test_shiny_rerolls_on_session_start():
+    """Each session_start triggers a new shiny roll."""
     with patch("pikabar.delta.random") as mock_rand:
-        mock_rand.random.return_value = 0.0001  # < 1/500 = shiny
-        assert check_shiny(None) is True
-        mock_rand.random.return_value = 0.5  # > 1/500 = not shiny
-        assert check_shiny(None) is False
+        mock_rand.random.return_value = 0.0001  # < 1/2048 = shiny
+        assert check_shiny({"shiny": False}, ["session_start"]) is True
+        mock_rand.random.return_value = 0.5  # > 1/2048 = not shiny
+        assert check_shiny({"shiny": True}, ["session_start"]) is False
+
+
+def test_shiny_new_session_no_prev_state():
+    """First-ever call (no state file) rolls for shiny."""
+    with patch("pikabar.delta.random") as mock_rand:
+        mock_rand.random.return_value = 0.0001
+        assert check_shiny(None, []) is True
+        mock_rand.random.return_value = 0.5
+        assert check_shiny(None, []) is False
 
 
 def test_shiny_sprite_uses_different_palette():

@@ -72,15 +72,17 @@ def make_snapshot(hp_pct, hp_window, context_pct,
 # Shiny Pikachu (Feature 3) — 1/500 chance per session start
 # ============================================================
 
-SHINY_CHANCE = 1 / 1024  # 2^10, Nintendo-style power-of-2
+SHINY_CHANCE = 1 / 2048  # 2^11, Nintendo-style power-of-2
 
 
-def check_shiny(prev_state):
-    """Roll for shiny on session start. Persists across calls within a session.
+def check_shiny(prev_state, events):
+    """Roll for shiny on each new session. Persists within a session.
 
-    Returns True if shiny. If prev_state has shiny=True, propagate it.
-    If no prev_state (new session), roll 1/500.
+    Re-rolls on every session_start event (not just first-ever call).
+    Once shiny within a session, stays shiny until next session.
     """
+    if "session_start" in events:
+        return random.random() < SHINY_CHANCE
     if prev_state is not None:
         return prev_state.get("shiny", False)
     return random.random() < SHINY_CHANCE
