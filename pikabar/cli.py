@@ -20,8 +20,7 @@ REPO_URL = "https://github.com/fioenix/claude-pikabar.git"
 
 def _find_statusline_command():
     """Return the best command string for the statusline entry."""
-    # If installed via pip, the module is importable system-wide
-    return f"{sys.executable} -m pikabar.statusline"
+    return "python3 -m pikabar.statusline"
 
 
 def _load_settings():
