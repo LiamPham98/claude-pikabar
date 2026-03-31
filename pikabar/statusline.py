@@ -207,26 +207,33 @@ def render_statusline(data):
     # Pass session_id to detect session changes
     slot_key, team_state, is_new_session = assign_session_to_team(prev_state, cwd, session_id)
 
-    # Get slot state and accumulate cost
+    # Get slot state
     slot_state = team_state[slot_key]
 
-    # Get Pokemon species for this slot
-    # Base species from model (Feature 2), then apply evolution stage from team
-    evolution_stage = slot_state.get("evolution_stage", 0)
-    base_species = get_species_for_model(model_id, evolution_stage)
+    # For new sessions, set species based on model (Haiku→Pichu, etc.)
+    if is_new_session:
+        base_model_species = get_species_for_model(model_id, 0)
+        slot_state["species"] = base_model_species
+        slot_state["evolution_stage"] = 0
+
+    # Accumulate cost
     prev_slot_cost = slot_state.get("cost_accumulated", 0.0)
     new_cost = prev_slot_cost + cost_usd
     slot_state["cost_accumulated"] = new_cost
 
     # Check for evolution for this team slot
+    # This updates slot_state with new evolution_stage if evolved
     just_evolved = False
     evolved, new_stage = check_team_evolution(slot_state)
     if evolved:
-        evolution_stage = new_stage
-        base_species = EVOLUTION_STAGES[new_stage]
-        slot_state["evolution_stage"] = evolution_stage
-        slot_state["species"] = base_species
+        slot_state["evolution_stage"] = new_stage
+        slot_state["species"] = EVOLUTION_STAGES[new_stage]
         just_evolved = True
+
+    # Get final species AFTER evolution check
+    # Evolution stage from team overrides base model species
+    evolution_stage = slot_state.get("evolution_stage", 0)
+    base_species = get_species_for_model(model_id, evolution_stage)
 
     # Update team state
     team_state[slot_key] = slot_state
