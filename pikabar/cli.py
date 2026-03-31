@@ -19,8 +19,15 @@ REPO_URL = "https://github.com/fioenix/claude-pikabar.git"
 
 
 def _find_statusline_command():
-    """Return the best command string for the statusline entry."""
-    return "python3 -m pikabar.statusline"
+    """Return the best command string for the statusline entry.
+
+    Uses 'python3' if it resolves to the same interpreter,
+    otherwise falls back to the full absolute path (venv/pyenv safety).
+    """
+    short = shutil.which("python3")
+    if short and os.path.realpath(short) == os.path.realpath(sys.executable):
+        return "python3 -m pikabar.statusline"
+    return f"{sys.executable} -m pikabar.statusline"
 
 
 def _load_settings():
