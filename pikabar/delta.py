@@ -131,6 +131,222 @@ def _safe_sub(a, b):
     return a - b
 
 
+# ============================================================
+# Team System (Feature 7) — Each SESSION gets a different Pokemon
+# ============================================================
+
+# Default team - 6 Pokemon slots
+# Each slot has a starter species that can evolve independently
+DEFAULT_TEAM = ["pikachu", "pikachu", "pichu", "raichu", "pichu", "raichu"]
+
+
+def init_team_state():
+    """Initialize team state with default team and per-slot evolution stages."""
+    team_state = {}
+    for i, species in enumerate(DEFAULT_TEAM):
+        team_state[str(i)] = {
+            "species": species,
+            "evolution_stage": 0,
+            "cost_accumulated": 0.0,
+            "session_count": 0,  # How many sessions used this slot
+        }
+    return team_state
+
+
+def load_team_state(cwd=""):
+    """Load just the team state from a previous state file.
+
+    This allows recovering the team even when prev_state is None
+    (e.g., after Claude Code restart).
+
+    Args:
+        cwd: Workspace directory for state file path
+
+    Returns:
+        Team state dict or None if not found
+    """
+    state = load_state(cwd)
+    if state and "team" in state:
+        return state["team"]
+    return None
+
+
+def assign_session_to_team(prev_state, cwd="", session_id=None):
+    """Assign current session to a team slot.
+
+    If prev_state exists and session_id matches, keep the same slot.
+    If prev_state is None or session_id changed, assign to slot with
+    lowest session_count (cycles to new Pokemon for new sessions).
+
+    Args:
+        prev_state: Previous state (None for new session)
+        cwd: Workspace directory for loading team state
+        session_id: Optional session identifier from Claude Code
+
+    Returns:
+        Tuple of (slot_key: str, team_state: dict, is_new_session: bool)
+    """
+    # Detect new session: no prev_state OR session_id changed
+    prev_session = prev_state.get("session_id") if prev_state else None
+    is_new_session = (prev_state is None) or (session_id and session_id != prev_session)
+
+    # Load existing team state
+    if prev_state and "team" in prev_state:
+        team_state = prev_state["team"]
+    else:
+        # Try to load team from disk (for Claude Code restarts)
+        saved_team = load_team_state(cwd)
+        team_state = saved_team if saved_team else init_team_state()
+
+    if is_new_session:
+        # New session - find slot with lowest session_count
+        min_count = float('inf')
+        chosen_slot = "0"
+
+        for slot_key, slot_data in team_state.items():
+            count = slot_data.get("session_count", 0)
+            if count < min_count:
+                min_count = count
+                chosen_slot = slot_key
+
+        # Increment session count for chosen slot
+        team_state[chosen_slot]["session_count"] = min_count + 1
+        return chosen_slot, team_state, True
+    else:
+        # Same session - keep current slot
+        current_slot = str(prev_state.get("team_slot", 0))
+        if current_slot not in team_state:
+            current_slot = "0"
+        return current_slot, team_state, False
+
+
+def get_pokemon_for_slot(slot_key, team_state):
+    """Get the Pokemon species for a team slot.
+
+    Args:
+        slot_key: Team slot key (string)
+        team_state: Dict of team slot → Pokemon state
+
+    Returns:
+        Tuple of (species_key, evolution_stage, slot_key)
+    """
+    if team_state is None or slot_key not in team_state:
+        return "pikachu", 0, slot_key
+
+    slot_state = team_state[slot_key]
+    stage = slot_state.get("evolution_stage", 0)
+    species = slot_state.get("species", DEFAULT_TEAM[int(slot_key)] if slot_key.isdigit() and int(slot_key) < len(DEFAULT_TEAM) else "pikachu")
+
+    EVOLUTION_STAGES = ["pichu", "pikachu", "raichu"]
+    if stage > 0 and stage < len(EVOLUTION_STAGES):
+        species = EVOLUTION_STAGES[stage]
+
+    return species, stage, slot_key
+
+
+# ============================================================
+# Model → Species mapping (Feature 2)
+# ============================================================
+
+MODEL_SPECIES_MAP = {
+    "opus":   "pikachu",
+    "sonnet": "pikachu",
+    "haiku":  "pichu",
+}
+
+EVOLUTION_STAGES = ["pichu", "pikachu", "raichu"]
+
+EVOLUTION_THRESHOLDS = {
+    "pichu":   {"cost": 1.0},   # ~1 session worth of usage
+    "pikachu": {"cost": 10.0},  # ~10 sessions worth of usage
+}
+
+
+def get_species_for_model(model_id, evolution_stage=0):
+    """Derive base species from model_id, then apply evolution stage.
+
+    Evolution stage overrides the base species if the Pokemon has evolved
+    from its starter form (e.g., Haiku starts as Pichu but can evolve).
+
+    Args:
+        model_id: Full model ID string (e.g., "claude-opus-4-6")
+        evolution_stage: 0=pichu, 1=pikachu, 2=raichu (or -1=unknown)
+
+    Returns:
+        Species key string ("pichu", "pikachu", or "raichu")
+    """
+    # Determine base species from model
+    base = "pikachu"  # default
+    model_lower = model_id.lower()
+    for key, species in MODEL_SPECIES_MAP.items():
+        if key in model_lower:
+            base = species
+            break
+
+    # Apply evolution stage
+    if evolution_stage > 0 and evolution_stage < len(EVOLUTION_STAGES):
+        return EVOLUTION_STAGES[evolution_stage]
+    return base
+
+
+def check_evolution(prev_state, cur_snapshot):
+    """Check if current Pokemon should evolve.
+
+    Evolution happens when:
+    - Pichu reaches $1.00 cumulative cost
+    - Pikachu reaches $10.00 cumulative cost
+
+    Args:
+        prev_state: Previous state snapshot (None on session start)
+        cur_snapshot: Current snapshot being built
+
+    Returns:
+        Tuple of (evolved: bool, new_stage: int)
+    """
+    # Get current stage (0=pichu, 1=pikachu, 2=raichu)
+    stage = cur_snapshot.get("evolution_stage", 0)
+    species = cur_snapshot.get("species", "pikachu")
+
+    # Check if there's a next evolution available
+    threshold = EVOLUTION_THRESHOLDS.get(species)
+    if threshold is None:
+        # Already at final form (Raichu)
+        return False, stage
+
+    # Check all threshold conditions
+    for key, required in threshold.items():
+        if cur_snapshot.get(key, 0) < required:
+            return False, stage
+
+    # All conditions met — evolve!
+    new_stage = stage + 1
+    return True, new_stage
+
+
+def check_team_evolution(slot_state):
+    """Check if a team Pokemon should evolve.
+
+    Args:
+        slot_state: Dict with species, evolution_stage, cost_accumulated
+
+    Returns:
+        Tuple of (evolved: bool, new_stage: int)
+    """
+    species = slot_state.get("species", "pikachu")
+    stage = slot_state.get("evolution_stage", 0)
+    cost = slot_state.get("cost_accumulated", 0.0)
+
+    threshold = EVOLUTION_THRESHOLDS.get(species)
+    if threshold is None:
+        return False, stage
+
+    for key, required in threshold.items():
+        if key == "cost" and cost < required:
+            return False, stage
+
+    return True, stage + 1
+
+
 def compute_deltas(prev, cur):
     """Compute deltas between previous and current snapshots.
 

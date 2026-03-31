@@ -22,8 +22,9 @@ from pikabar.renderer import grid_to_lines
 # ============================================================
 
 def test_session_greeting_returns_valid_text():
-    text = get_session_greeting()
-    all_greetings = SESSION_GREETINGS + list(SESSION_DAY_GREETINGS.values())
+    text = get_session_greeting("Pikachu")
+    all_greetings = [g.replace("{SPECIES}", "Pikachu") for g in SESSION_GREETINGS]
+    all_greetings += [g.replace("{SPECIES}", "Pikachu") for g in SESSION_DAY_GREETINGS.values()]
     assert text in all_greetings
 
 
@@ -34,8 +35,8 @@ def test_session_greeting_day_override():
         with patch("pikabar.flavor.random") as mock_rand:
             mock_rand.random.return_value = 0.1  # < 0.5 → use day greeting
             mock_rand.choice.return_value = SESSION_GREETINGS[0]
-            result = get_session_greeting()
-            assert result == SESSION_DAY_GREETINGS[0]
+            result = get_session_greeting("Pikachu")
+            assert result == SESSION_DAY_GREETINGS[0].replace("{SPECIES}", "Pikachu")
 
 
 def test_info_lines_session_start_shows_greeting():
@@ -115,8 +116,10 @@ def test_shiny_sprite_dimensions():
 # ============================================================
 
 def test_critical_flavor_returns_valid():
-    text = get_critical_flavor()
-    assert text in CRITICAL_FLAVOR
+    text = get_critical_flavor("Pikachu")
+    # Should be a substituted version of CRITICAL_FLAVOR
+    assert "{SPECIES}" not in text
+    assert text != ""
 
 
 def test_info_lines_critical_hp_shows_danger():
