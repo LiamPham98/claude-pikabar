@@ -1,6 +1,6 @@
 """pikabar — Pokemon-style statusline for Claude Code."""
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from .statusline import render_statusline
 
