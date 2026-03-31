@@ -19,7 +19,7 @@ Info is padded to INFO_COL via spaces (Ink.js does not support CSI CHA).
 
 from .palette import fg, bg, RST, BOLD, SUBTLE, DIM, GOLD, GREEN, RD, visible_len
 from .hp_bar import render_hp_bar, render_pp_bar, get_badge
-from .flavor import get_flavor_text, get_session_greeting, get_critical_flavor
+from .flavor import get_flavor_text, get_session_greeting, get_critical_flavor, get_evolution_flavor
 
 # Layout constants
 SP = ""            # no left margin — flush to terminal left edge
@@ -203,10 +203,13 @@ def _info_lines(session, badge_override=None, line0_override=None, extra_overrid
     pp_label = f"{fg(SUBTLE)}ctx left{RST}"
     pp_line = f"{pp} {pp_label}"
 
-    # [4] Extra line: override > session greeting > critical HP drama > flavor > empty
+    # [4] Extra line: override > evolution > session greeting > critical HP drama > flavor > empty
     pokemon_name = s.get("pokemon_name", "Pikachu")
     if extra_override is not None:
         extra = extra_override
+    elif s.get("just_evolved"):
+        # Feature 6: Evolution notification
+        extra = f"{fg(220)}{get_evolution_flavor(pokemon_name)}{RST}"
     elif "session_start" in s.get("events", []):
         # Feature 1: Session greeting on first call
         extra = f"{fg(228)}{get_session_greeting(pokemon_name)}{RST}"
