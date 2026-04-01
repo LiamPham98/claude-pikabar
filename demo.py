@@ -19,6 +19,7 @@ Options:
     B = Raichu (all reactions)
     S = Shiny Pichu
     R = Shiny Raichu
+    T = Agent Teams (party balls, agent label, agent flavor)
 """
 
 import sys
@@ -134,6 +135,25 @@ SHINY_RAICHU_SEGMENTS = [
     ("idle",      SHINY_RAICHU_IDLE_FRAMES,    2,   4, decorate_idle),
 ]
 
+# Agent Teams segments
+AGENT_SEGMENTS = [
+    ("idle",      IDLE_FRAMES,      2,   4, decorate_idle),
+    ("thinking",  [THINKING_SP],    2,   4, decorate_thinking),
+    ("staging",   [STAGING_SP],     2,   3, decorate_staging),
+    ("committed", [COMMITTED_SP],   2,   3, decorate_committed),
+    ("recovered", [RECOVERED_SP],    2,   3, decorate_recovered),
+    ("idle",      IDLE_FRAMES,      2,   3, decorate_idle),
+]
+
+# Agent Teams sessions
+AGENT_SESSIONS = {
+    "idle":      {**DEMO_SESSION, "hp_pct": 85, "pp_pct": 95},
+    "thinking":  {**DEMO_SESSION, "hp_pct": 72, "pp_pct": 80},
+    "staging":   {**DEMO_SESSION, "hp_pct": 65, "pp_pct": 70, "staged": 5, "modified": 3},
+    "committed": {**DEMO_SESSION, "hp_pct": 60, "pp_pct": 65, "staged": 0, "modified": 0},
+    "recovered": {**DEMO_SESSION, "hp_pct": 90, "pp_pct": 60},
+}
+
 
 def main():
     print(f"\n{fg(GOLD)}{BOLD}{'=' * 56}")
@@ -148,6 +168,10 @@ def main():
     print(f"  {fg(GOLD)}B{RST} = Raichu (all reactions)")
     print(f"  {fg(GOLD)}S{RST} = Shiny Pichu")
     print(f"  {fg(GOLD)}R{RST} = Shiny Raichu")
+    print(f"  {fg(GOLD)}T{RST} = Agent Teams (1 agent)")
+    print(f"  {fg(GOLD)}T2{RST} = Agent Teams (2 agents)")
+    print(f"  {fg(GOLD)}T3{RST} = Agent Teams (3 agents)")
+    print(f"  {fg(GOLD)}T6{RST} = Agent Teams (6 agents - full party)")
     print()
 
     choice = "0"
@@ -202,6 +226,51 @@ def main():
         session["species"] = "raichu"
         session["shiny"] = True
         animate_unified(SHINY_RAICHU_SEGMENTS, loop=True, session=session)
+
+    elif choice.upper() == "T":
+        # Agent Teams demo - simulates Claude Code Agent Teams mode
+        session = dict(DEMO_SESSION)
+        session["agent_name"] = "research-bot"
+        session["worktree_name"] = "feature-x"
+        session["worktree_branch"] = "feat/x"
+        session["pokemon_name"] = "PIKACHU"
+        session["species"] = "pikachu"
+        session["num_agents"] = 1  # Show 1 active agent
+        # Use the unified segments but with agent info
+        animate_unified(AGENT_SEGMENTS, loop=True, session=session)
+
+    elif choice.upper() == "T2":
+        # Agent Teams demo - 2 active agents
+        session = dict(DEMO_SESSION)
+        session["agent_name"] = "research-bot"
+        session["worktree_name"] = "feature-x"
+        session["worktree_branch"] = "feat/x"
+        session["pokemon_name"] = "PIKACHU"
+        session["species"] = "pikachu"
+        session["num_agents"] = 2  # Show 2 active agents
+        animate_unified(AGENT_SEGMENTS, loop=True, session=session)
+
+    elif choice.upper() == "T3":
+        # Agent Teams demo - 3 active agents
+        session = dict(DEMO_SESSION)
+        session["agent_name"] = "research-bot"
+        session["worktree_name"] = "feature-x"
+        session["worktree_branch"] = "feat/x"
+        session["pokemon_name"] = "PIKACHU"
+        session["species"] = "pikachu"
+        session["num_agents"] = 3  # Show 3 active agents
+        animate_unified(AGENT_SEGMENTS, loop=True, session=session)
+
+    elif choice.upper() == "T6":
+        # Agent Teams demo - 6 active agents (full team!)
+        session = dict(DEMO_SESSION)
+        session["agent_name"] = "research-bot"
+        session["worktree_name"] = "feature-x"
+        session["worktree_branch"] = "feat/x"
+        session["pokemon_name"] = "PIKACHU"
+        session["species"] = "pikachu"
+        session["num_agents"] = 6  # Show 6 active agents (full party)
+        animate_unified(AGENT_SEGMENTS, loop=True, session=session)
 
     else:
         print(f"  Unknown option: {choice}")

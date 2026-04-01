@@ -43,11 +43,22 @@ from pikabar.sprites import (
 )
 
 # --- Temp file paths ---
-FRAME_FILE = "/tmp/pikabar-frame"
 GIT_CACHE_FILE = "/tmp/pikabar-git-cache"
 GIT_CACHE_MAX_AGE = 5  # seconds
 
-# --- Reaction → sprite key mapping (species-agnostic) ---
+# --- Time-based frame rates (fps per reaction) ---
+REACTION_FPS = {
+    "idle":      2.0,
+    "thinking":  2.0,
+    "staging":   1.0,
+    "committed": 1.0,
+    "recovered": 1.0,
+    "hit":       1.0,
+    "compacted": 1.5,
+    "faint":     6.0,
+}
+
+# --- Reaction → sprite key mapping (species-aware) ---
 REACTION_KEYS = {
     "idle":      "idle_frames",
     "thinking":  "thinking",
@@ -56,20 +67,21 @@ REACTION_KEYS = {
     "recovered": "recovered",
     "hit":       "hit",
     "compacted": "compacted",
-    "faint":     "faint",  # special: uses BALL_FRAMES
+    "faint":     "faint",
 }
 
 
-def read_frame():
-    """Read and increment frame counter from temp file."""
-    try:
-        with open(FRAME_FILE) as f:
-            frame = int(f.read().strip())
-    except (FileNotFoundError, ValueError):
-        frame = 0
-    with open(FRAME_FILE, "w") as f:
-        f.write(str(frame + 1))
-    return frame
+def get_time_frame(reaction, num_frames):
+    """Select frame index based on wall-clock time and reaction FPS.
+
+    Returns int in [0, num_frames). Each statusline call renders the
+    frame that is 'correct' for the current moment, so animation
+    progresses even if call intervals are irregular.
+    """
+    if num_frames <= 1:
+        return 0
+    fps = REACTION_FPS.get(reaction, 2.0)
+    return int(time.time() * fps) % num_frames
 
 
 def get_git_info(cwd):
@@ -137,12 +149,15 @@ def compute_hp(data):
         return max(0, int(100 - seven_d)), "7d"
 
 
-def get_sprite(reaction, frame, shiny=False, species="pikachu"):
+def get_sprite(reaction, shiny=False, species="pikachu"):
     """Select the appropriate sprite grid for a reaction and species.
+
+    Uses time-based frame selection (fioenix feature) for smooth real-time
+    animation, combined with species-aware sprites (HEAD feature) for
+    multi-Pokemon evolution system.
 
     Args:
         reaction: Reaction name (idle, thinking, staging, committed, etc.)
-        frame: Frame counter for idle animation cycling
         shiny: Whether to use shiny variant
         species: Pokemon species key (pichu, pikachu, raichu)
 
@@ -150,21 +165,21 @@ def get_sprite(reaction, frame, shiny=False, species="pikachu"):
         6x15 pixel grid (list of lists)
     """
     if reaction == "faint":
-        return BALL_FRAMES[frame % len(BALL_FRAMES)]
+        frame = get_time_frame("faint", len(BALL_FRAMES))
+        return BALL_FRAMES[frame]
 
     sprites = get_species_sprites(species, shiny=shiny)
     key = REACTION_KEYS.get(reaction, "idle_frames")
 
     if key == "idle_frames":
         frames = sprites["idle_frames"]
-        return frames[frame % len(frames)]
+        frame = get_time_frame("idle", len(frames))
+        return frames[frame]
     return sprites.get(key, sprites["idle_frames"][0])
 
 
 def render_statusline(data):
     """Render the complete pikabar statusline output."""
-    frame = read_frame()
-
     # --- Extract data from Claude Code JSON ---
     model_id = data.get("model", {}).get("id", "")
     display_name = data.get("model", {}).get("display_name", "Claude")
@@ -178,6 +193,11 @@ def render_statusline(data):
 
     hp_pct, hp_window = compute_hp(data)
     context_pct = data.get("context_window", {}).get("used_percentage")
+
+    # Agent / worktree fields (absent in normal sessions)
+    agent_name = data.get("agent", {}).get("name") or ""
+    worktree_name = data.get("worktree", {}).get("name") or ""
+    worktree_branch = data.get("worktree", {}).get("branch") or ""
 
     # --- Delta detection ---
     snapshot = make_snapshot(
@@ -244,6 +264,9 @@ def render_statusline(data):
     # PP = context remaining (inverted)
     pp_pct = (100 - context_pct) if context_pct is not None else None
 
+    # Time-based tick for decorators (2 fps baseline)
+    tick = int(time.time() * 2)
+
     session = {
         "model_id": model_id,
         "model_name": model_name,
@@ -263,13 +286,16 @@ def render_statusline(data):
         "reaction": reaction,
         "shiny": is_shiny,
         "streak_days": streak_days,
-        "_tick": frame,
+        "agent_name": agent_name,
+        "worktree_name": worktree_name,
+        "worktree_branch": worktree_branch,
+        "_tick": tick,
     }
 
     # --- Select sprite and decorate ---
-    sprite_grid = get_sprite(reaction, frame, shiny=is_shiny, species=species)
+    sprite_grid = get_sprite(reaction, shiny=is_shiny, species=species)
     sprite_lines = grid_to_lines(sprite_grid)
-    output_lines = decorate(reaction, sprite_lines, frame, session=session)
+    output_lines = decorate(reaction, sprite_lines, tick, session=session)
 
     # Prefix each line with \033[0m to prevent Ink.js whitespace trimming
     return "\n".join(f"\033[0m{line}" for line in output_lines)

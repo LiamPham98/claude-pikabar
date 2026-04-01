@@ -98,6 +98,15 @@ def uninstall():
         print(f"Removed statusLine config.")
 
     _save_settings(settings)
+
+    # Clean up legacy frame counter file (replaced by time-based frames)
+    legacy_frame = "/tmp/pikabar-frame"
+    if os.path.exists(legacy_frame):
+        try:
+            os.remove(legacy_frame)
+        except OSError:
+            pass
+
     print(f"pikabar uninstalled from {SETTINGS_PATH}")
     return 0
 
