@@ -161,25 +161,64 @@ def _safe_sub(a, b):
 
 # ============================================================
 # Team System — Single species pool with evolution
-# All Pokemon start as Pikachu and evolve based on cumulative cost
+# All Pokemon start as Pichu and evolve based on cumulative cost
+# Cost thresholds: $0-149=Pichu, $150-299=Pikachu, $300+=Raichu
 # ============================================================
 
 EVOLUTION_STAGES = ["pichu", "pikachu", "raichu"]
 
-EVOLUTION_THRESHOLDS = {
-    "pikachu": {"cost": 10.0},  # ~10 sessions worth of usage
+# Cost thresholds for evolution (derived from species, not stored)
+COST_THRESHOLDS = {
+    150: "pikachu",  # cost >= 150 → Pikachu
+    300: "raichu",   # cost >= 300 → Raichu
 }
 
 # Single team slot for single species pool
 TEAM_SLOT_KEY = "0"
 
 
+def derive_species_from_cost(cost):
+    """Derive species from accumulated cost.
+
+    Cost thresholds:
+      $0-149: Pichu
+      $150-299: Pikachu
+      $300+: Raichu
+
+    Args:
+        cost: Accumulated cost in USD
+
+    Returns:
+        Species string: "pichu", "pikachu", or "raichu"
+    """
+    if cost >= 300:
+        return "raichu"
+    elif cost >= 150:
+        return "pikachu"
+    else:
+        return "pichu"
+
+
+def derive_stage_from_species(species):
+    """Derive evolution stage from species.
+
+    Args:
+        species: Species string
+
+    Returns:
+        Stage int: 0=pichu, 1=pikachu, 2=raichu
+    """
+    if species in EVOLUTION_STAGES:
+        return EVOLUTION_STAGES.index(species)
+    return 1  # Default to pikachu
+
+
 def init_team_state():
-    """Initialize team state with single slot for single species pool."""
+    """Initialize team state with single slot starting as Pichu."""
     return {
         TEAM_SLOT_KEY: {
-            "species": "pikachu",
-            "evolution_stage": 1,  # 0=pichu, 1=pikachu, 2=raichu
+            "species": "pichu",
+            "evolution_stage": 0,  # 0=pichu, 1=pikachu, 2=raichu
             "cost_accumulated": 0.0,
         }
     }
@@ -196,8 +235,8 @@ def get_pokemon_state(team_state):
     """
     if team_state is None or TEAM_SLOT_KEY not in team_state:
         return {
-            "species": "pikachu",
-            "evolution_stage": 1,
+            "species": "pichu",
+            "evolution_stage": 0,
             "cost_accumulated": 0.0,
         }
     return team_state[TEAM_SLOT_KEY]
@@ -207,13 +246,14 @@ def get_species_from_stage(stage):
     """Get species key from evolution stage."""
     if 0 <= stage < len(EVOLUTION_STAGES):
         return EVOLUTION_STAGES[stage]
-    return "pikachu"
+    return "pichu"
 
 
 def check_evolution(slot_state):
     """Check if Pokemon should evolve based on accumulated cost.
 
-    Evolution happens when Pikachu reaches $10.00 cumulative cost.
+    Evolution happens when accumulated cost crosses threshold.
+    Derives species from cost each time - no need to track stage changes.
 
     Args:
         slot_state: Dict with species, evolution_stage, cost_accumulated
@@ -221,20 +261,18 @@ def check_evolution(slot_state):
     Returns:
         Tuple of (evolved: bool, new_stage: int)
     """
-    species = slot_state.get("species", "pikachu")
-    stage = slot_state.get("evolution_stage", 1)
     cost = slot_state.get("cost_accumulated", 0.0)
+    current_stage = slot_state.get("evolution_stage", 0)
 
-    threshold = EVOLUTION_THRESHOLDS.get(species)
-    if threshold is None:
-        # Already at final form (Raichu)
-        return False, stage
+    # Derive what the species SHOULD be based on current cost
+    new_species = derive_species_from_cost(cost)
+    new_stage = derive_stage_from_species(new_species)
 
-    required_cost = threshold.get("cost", 0)
-    if cost < required_cost:
-        return False, stage
+    # Evolve if stage increased
+    if new_stage > current_stage:
+        return True, new_stage
 
-    return True, min(stage + 1, len(EVOLUTION_STAGES) - 1)
+    return False, current_stage
 
 
 def compute_deltas(prev, cur):

@@ -148,26 +148,26 @@ def test_shiny_migration():
 # --- Team and Evolution tests ---
 
 def test_init_team_state():
-    """Team state initializes with single slot."""
+    """Team state initializes with single slot as Pichu (cost=0)."""
     team = init_team_state()
     assert "0" in team
-    assert team["0"]["species"] == "pikachu"
-    assert team["0"]["evolution_stage"] == 1
+    assert team["0"]["species"] == "pichu"
+    assert team["0"]["evolution_stage"] == 0
 
 
 def test_get_pokemon_state():
     """Get Pokemon state from team."""
     team = init_team_state()
     state = get_pokemon_state(team)
-    assert state["species"] == "pikachu"
-    assert state["evolution_stage"] == 1
+    assert state["species"] == "pichu"
+    assert state["evolution_stage"] == 0
 
 
 def test_get_pokemon_state_default():
     """Get Pokemon state returns defaults if missing."""
     state = get_pokemon_state(None)
-    assert state["species"] == "pikachu"
-    assert state["evolution_stage"] == 1
+    assert state["species"] == "pichu"
+    assert state["evolution_stage"] == 0
 
 
 def test_get_species_from_stage():
@@ -177,23 +177,44 @@ def test_get_species_from_stage():
     assert get_species_from_stage(2) == "raichu"
 
 
+def test_derive_species_from_cost():
+    """Species derived from accumulated cost thresholds."""
+    from pikabar.delta import derive_species_from_cost
+    assert derive_species_from_cost(0) == "pichu"
+    assert derive_species_from_cost(100) == "pichu"
+    assert derive_species_from_cost(149) == "pichu"
+    assert derive_species_from_cost(150) == "pikachu"
+    assert derive_species_from_cost(200) == "pikachu"
+    assert derive_species_from_cost(299) == "pikachu"
+    assert derive_species_from_cost(300) == "raichu"
+    assert derive_species_from_cost(500) == "raichu"
+
+
 def test_check_evolution_below_threshold():
     """No evolution below cost threshold."""
-    slot = {"species": "pikachu", "evolution_stage": 1, "cost_accumulated": 5.0}
+    slot = {"species": "pichu", "evolution_stage": 0, "cost_accumulated": 100.0}
     evolved, _ = check_evolution(slot)
     assert evolved is False
 
 
-def test_check_evolution_at_threshold():
-    """Evolution triggers at cost threshold."""
-    slot = {"species": "pikachu", "evolution_stage": 1, "cost_accumulated": 10.0}
+def test_check_evolution_at_pikachu_threshold():
+    """Evolution triggers at $150 threshold (Pichu -> Pikachu)."""
+    slot = {"species": "pichu", "evolution_stage": 0, "cost_accumulated": 150.0}
+    evolved, new_stage = check_evolution(slot)
+    assert evolved is True
+    assert new_stage == 1  # Pikachu
+
+
+def test_check_evolution_at_raichu_threshold():
+    """Evolution triggers at $300 threshold (Pikachu -> Raichu)."""
+    slot = {"species": "pikachu", "evolution_stage": 1, "cost_accumulated": 300.0}
     evolved, new_stage = check_evolution(slot)
     assert evolved is True
     assert new_stage == 2  # Raichu
 
 
 def test_check_evolution_already_final():
-    """No evolution for final form."""
-    slot = {"species": "raichu", "evolution_stage": 2, "cost_accumulated": 100.0}
+    """No evolution for Raichu (final form)."""
+    slot = {"species": "raichu", "evolution_stage": 2, "cost_accumulated": 500.0}
     evolved, _ = check_evolution(slot)
     assert evolved is False

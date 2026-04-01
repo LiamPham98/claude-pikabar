@@ -145,7 +145,8 @@ DATE_EGGS = {
 COST_MILESTONES = {
     1:   "{SPECIES} earned 100P!",
     5:   "That's 500P spent!",
-    10:  "Evolved into RAICHU?!",
+    150: "Evolved into PIKACHU!",
+    300: "Evolved into RAICHU!",
     25:  "PROF OAK: Impressive!",
     50:  "Elite Four material!",
     100: "{SPECIES} is CHAMPION!",
