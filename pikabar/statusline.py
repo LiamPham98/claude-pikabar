@@ -44,9 +44,20 @@ from pikabar.delta import (
 )
 
 # --- Temp file paths ---
-FRAME_FILE = "/tmp/pikabar-frame"
 GIT_CACHE_FILE = "/tmp/pikabar-git-cache"
 GIT_CACHE_MAX_AGE = 5  # seconds
+
+# --- Time-based frame rates (fps per reaction) ---
+REACTION_FPS = {
+    "idle":      2.0,
+    "thinking":  2.0,
+    "staging":   1.0,  # single frame, fps irrelevant
+    "committed": 1.0,
+    "recovered": 1.0,
+    "hit":       1.0,
+    "compacted": 1.5,
+    "faint":     6.0,
+}
 
 # --- Reaction → sprite mapping ---
 REACTION_SPRITES = {
@@ -72,16 +83,17 @@ SHINY_REACTION_SPRITES = {
 }
 
 
-def read_frame():
-    """Read and increment frame counter from temp file."""
-    try:
-        with open(FRAME_FILE) as f:
-            frame = int(f.read().strip())
-    except (FileNotFoundError, ValueError):
-        frame = 0
-    with open(FRAME_FILE, "w") as f:
-        f.write(str(frame + 1))
-    return frame
+def get_time_frame(reaction, num_frames):
+    """Select frame index based on wall-clock time and reaction FPS.
+
+    Returns int in [0, num_frames). Each statusline call renders the
+    frame that is 'correct' for the current moment, so animation
+    progresses even if call intervals are irregular.
+    """
+    if num_frames <= 1:
+        return 0
+    fps = REACTION_FPS.get(reaction, 2.0)
+    return int(time.time() * fps) % num_frames
 
 
 def get_git_info(cwd):
@@ -149,23 +161,24 @@ def compute_hp(data):
         return max(0, int(100 - seven_d)), "7d"
 
 
-def get_sprite(reaction, frame, shiny=False):
-    """Select the appropriate sprite grid for a reaction."""
+def get_sprite(reaction, shiny=False):
+    """Select the appropriate sprite grid for a reaction using time-based frame."""
     if reaction == "faint":
-        return BALL_FRAMES[frame % len(BALL_FRAMES)]
+        frame = get_time_frame("faint", len(BALL_FRAMES))
+        return BALL_FRAMES[frame]
     if shiny:
         if reaction == "idle":
-            return SHINY_IDLE_FRAMES[frame % len(SHINY_IDLE_FRAMES)]
+            frame = get_time_frame("idle", len(SHINY_IDLE_FRAMES))
+            return SHINY_IDLE_FRAMES[frame]
         return SHINY_REACTION_SPRITES.get(reaction, SHINY_IDLE_FRAMES[0])
     if reaction == "idle":
-        return IDLE_FRAMES[frame % len(IDLE_FRAMES)]
+        frame = get_time_frame("idle", len(IDLE_FRAMES))
+        return IDLE_FRAMES[frame]
     return REACTION_SPRITES.get(reaction, IDLE_FRAMES[0])
 
 
 def render_statusline(data):
     """Render the complete pikabar statusline output."""
-    frame = read_frame()
-
     # --- Extract data from Claude Code JSON ---
     model_id = data.get("model", {}).get("id", "")
     display_name = data.get("model", {}).get("display_name", "Claude")
@@ -209,6 +222,9 @@ def render_statusline(data):
     # PP = context remaining (inverted)
     pp_pct = (100 - context_pct) if context_pct is not None else None
 
+    # Time-based tick for decorators (2 fps baseline)
+    tick = int(time.time() * 2)
+
     session = {
         "model_id": model_id,
         "model_name": model_name,
@@ -224,13 +240,13 @@ def render_statusline(data):
         "reaction": reaction,
         "shiny": is_shiny,
         "streak_days": streak_days,
-        "_tick": frame,
+        "_tick": tick,
     }
 
     # --- Select sprite and decorate ---
-    sprite_grid = get_sprite(reaction, frame, shiny=is_shiny)
+    sprite_grid = get_sprite(reaction, shiny=is_shiny)
     sprite_lines = grid_to_lines(sprite_grid)
-    output_lines = decorate(reaction, sprite_lines, frame, session=session)
+    output_lines = decorate(reaction, sprite_lines, tick, session=session)
 
     # Prefix each line with \033[0m to prevent Ink.js whitespace trimming
     return "\n".join(f"\033[0m{line}" for line in output_lines)
